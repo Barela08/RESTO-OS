@@ -25,7 +25,20 @@ export type PaymentStatus = 'UNPAID' | 'PENDING' | 'PROCESSING' | 'PAID' | 'FAIL
 
 export type ServiceRequestType = 'ASSISTANCE' | 'CALL_WAITER' | 'REQUEST_BILL' | 'CLEANING' | 'WATER';
 
-export type ServiceRequestStatus = 'PENDING' | 'ACKNOWLEDGED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'ESCALATED';
+export type WaiterCallStatus =
+  | 'REQUESTED'
+  | 'SENT'
+  | 'ACCEPTED'
+  | 'ON_THE_WAY'
+  | 'ARRIVED'
+  | 'COMPLETED'
+  | 'CANCELLED'
+  | 'ESCALATED'
+  | 'PENDING'
+  | 'ACKNOWLEDGED'
+  | 'IN_PROGRESS';
+
+export type ServiceRequestStatus = 'PENDING' | 'ACKNOWLEDGED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'ESCALATED' | 'REQUESTED' | 'SENT' | 'ACCEPTED' | 'ON_THE_WAY' | 'ARRIVED';
 
 export type RepeatScanStatus = 'PENDING' | 'APPROVED_CONTINUE' | 'APPROVED_NEW' | 'REJECTED';
 
@@ -67,18 +80,77 @@ export interface RestaurantSettings {
   allow_guest_ordering: boolean;
   auto_accept_orders: boolean;
   qr_auto_expire_hours: number;
+  waiter_escalation_timeout_seconds?: number;
+  backup_waiter_id?: string;
+  waiter_voice_enabled?: boolean;
+  waiter_voice_language?: 'hi' | 'en';
+  waiter_sound_volume?: number;
 }
 
 export interface Profile {
   id: string;
   restaurant_id: string;
   email: string;
+  username?: string;
+  password_hash?: string;
   full_name: string;
   phone?: string;
   role_id: StaffRoleType;
   avatar_url?: string;
+  employee_id?: string;
   is_active: boolean;
   created_at: string;
+  last_login_at?: string;
+  last_active_at?: string;
+  failed_login_attempts?: number;
+  locked_until?: string | null;
+}
+
+export interface SecurityAuditEvent {
+  id: string;
+  restaurant_id: string;
+  user_id?: string;
+  username?: string;
+  role?: string;
+  event_type:
+    | 'LOGIN_SUCCESS'
+    | 'LOGIN_FAILED'
+    | 'LOGOUT'
+    | 'PASSWORD_RESET'
+    | 'PASSWORD_CHANGE'
+    | 'STAFF_CREATED'
+    | 'STAFF_UPDATED'
+    | 'STAFF_DEACTIVATED'
+    | 'STAFF_ACTIVATED'
+    | 'ROLE_CHANGED'
+    | 'SESSION_REVOKED'
+    | 'RATE_LIMIT_TRIGGERED'
+    | 'UNAUTHORIZED_ACCESS';
+  ip_address?: string;
+  result: 'SUCCESS' | 'FAILURE' | 'BLOCKED';
+  metadata?: Record<string, any>;
+  timestamp: string;
+}
+
+export interface StaffAccountCreateParams {
+  fullName: string;
+  loginId: string;
+  password: string;
+  role: StaffRoleType;
+  email: string;
+  phone?: string;
+  designation?: string;
+  employeeCode?: string;
+  shiftPreference?: string;
+}
+
+export interface StaffAccountUpdateParams {
+  fullName?: string;
+  phone?: string;
+  designation?: string;
+  shiftPreference?: string;
+  role?: StaffRoleType;
+  isActive?: boolean;
 }
 
 export interface Staff {
@@ -86,6 +158,8 @@ export interface Staff {
   restaurant_id: string;
   profile_id: string;
   employee_code: string;
+  name?: string;
+  role?: StaffRoleType;
   designation?: string;
   shift_preference?: string;
   is_on_duty: boolean;
@@ -131,13 +205,16 @@ export interface TableSession {
   table?: RestaurantTable;
   qr_token_id: string;
   session_token: string;
-  status: 'ACTIVE' | 'PAYMENT_PENDING' | 'CLOSED';
+  status: 'ACTIVE' | 'PAYMENT_PENDING' | 'CLOSED' | 'COMPLETED';
   opened_at: string;
   closed_at?: string;
+  guest_count?: number;
   customer_name?: string;
   customer_phone?: string;
   customer_id?: string;
   created_at: string;
+  orders?: any[];
+  invoices?: any[];
 }
 
 export interface RepeatScanRequest {
@@ -296,14 +373,26 @@ export interface WaiterCall {
   table_id: string;
   table_number: string;
   table_session_id: string;
+  customer_id?: string;
+  customer_name?: string;
+  customer_phone?: string;
   assigned_waiter_id?: string;
+  assigned_waiter_name?: string;
   request_type: ServiceRequestType;
-  status: ServiceRequestStatus;
+  request_message?: string;
+  status: WaiterCallStatus;
+  priority?: 'NORMAL' | 'URGENT';
   notes?: string;
   acknowledged_at?: string;
+  accepted_at?: string;
+  on_the_way_at?: string;
+  arrived_at?: string;
   completed_at?: string;
+  escalated_at?: string;
   is_escalated?: boolean;
+  response_time_seconds?: number;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface Payment {

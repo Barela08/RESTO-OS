@@ -38,7 +38,7 @@ export const CustomerBagPage: React.FC = () => {
     specialInstructions,
     setSpecialInstructions,
   } = useCartStore();
-  const { customer, isLoggedIn } = useCustomerAuthStore();
+  const { customer, isLoggedIn, lookupAndRecognize } = useCustomerAuthStore();
 
   const restaurant = dbAdapter.getRestaurant();
   const settings = dbAdapter.getSettings();
@@ -49,6 +49,23 @@ export const CustomerBagPage: React.FC = () => {
   const [couponCode, setCouponCode] = useState('');
   const [appliedDiscount, setAppliedDiscount] = useState<number>(0);
   const [couponMessage, setCouponMessage] = useState<string | null>(null);
+  const [recognitionNote, setRecognitionNote] = useState<string | null>(null);
+
+  const handlePhoneChange = (val: string) => {
+    setCustomerPhone(val);
+    const clean = val.replace(/\D/g, '');
+    if (clean.length === 10) {
+      const res = lookupAndRecognize(val);
+      if (res.isExisting && res.customer) {
+        setCustomerName(res.customer.full_name);
+        setRecognitionNote(`Auto-recognized: ${res.customer.full_name}`);
+      } else {
+        setRecognitionNote('New guest phone number');
+      }
+    } else {
+      setRecognitionNote(null);
+    }
+  };
 
   const subtotal = getSubtotal();
   const cgst = getCGST();
@@ -258,23 +275,29 @@ export const CustomerBagPage: React.FC = () => {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-xs">
               <div>
+                <label className="font-bold text-slate-700 block mb-1">Mobile Phone (for digital invoice & stamps):</label>
+                <input
+                  type="tel"
+                  value={customerPhone}
+                  onChange={(e) => handlePhoneChange(e.target.value)}
+                  placeholder="e.g. 98888 77665"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-brand-orange"
+                />
+                {recognitionNote && (
+                  <p className="text-[11px] font-bold text-green-600 mt-1 flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" />
+                    <span>{recognitionNote}</span>
+                  </p>
+                )}
+              </div>
+
+              <div>
                 <label className="font-bold text-slate-700 block mb-1">Your Full Name:</label>
                 <input
                   type="text"
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
                   placeholder="e.g. Rohit Sharma"
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-brand-orange"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Mobile Phone (for digital invoice & stamps):</label>
-                <input
-                  type="tel"
-                  value={customerPhone}
-                  onChange={(e) => setCustomerPhone(e.target.value)}
-                  placeholder="e.g. +91 98888 77665"
                   className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-brand-orange"
                 />
               </div>

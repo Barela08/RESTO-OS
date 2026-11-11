@@ -20,6 +20,7 @@ import {
   OrderItem,
   KitchenTicket,
   WaiterCall,
+  WaiterCallStatus,
   Payment,
   Invoice,
   Customer,
@@ -49,6 +50,9 @@ import {
   LoyaltyProgram,
   StaffShift,
   StaffAttendance,
+  SecurityAuditEvent,
+  StaffAccountCreateParams,
+  StaffAccountUpdateParams,
 } from '../types';
 import { QRService } from './qrService';
 import { audioService } from './audioService';
@@ -102,18 +106,110 @@ class DatabaseAdapter {
   };
 
   private profiles: Profile[] = [
-    { id: 'p-adm-1', restaurant_id: 'rest-001-main', email: 'admin@resto.os', full_name: 'Rajesh Sharma', phone: '+91 99000 11223', role_id: 'admin', is_active: true, created_at: new Date().toISOString() },
-    { id: 'p-own-1', restaurant_id: 'rest-001-main', email: 'owner@resto.os', full_name: 'Vikramaditya Roy', phone: '+91 99000 22334', role_id: 'owner', is_active: true, created_at: new Date().toISOString() },
-    { id: 'p-wtr-1', restaurant_id: 'rest-001-main', email: 'waiter@resto.os', full_name: 'Arun Kumar', phone: '+91 99000 33445', role_id: 'waiter', is_active: true, created_at: new Date().toISOString() },
-    { id: 'p-kit-1', restaurant_id: 'rest-001-main', email: 'kitchen@resto.os', full_name: 'Chef Sanjeev Anand', phone: '+91 99000 44556', role_id: 'kitchen', is_active: true, created_at: new Date().toISOString() },
-    { id: 'p-ctr-1', restaurant_id: 'rest-001-main', email: 'counter@resto.os', full_name: 'Priya Deshmukh', phone: '+91 99000 55667', role_id: 'counter', is_active: true, created_at: new Date().toISOString() },
+    {
+      id: 'p-own-1',
+      restaurant_id: 'rest-001-main',
+      email: 'owner@resto.os',
+      username: 'owner',
+      password_hash: 'Owner@2026!',
+      full_name: 'Vikramaditya Roy',
+      phone: '+91 99000 22334',
+      role_id: 'owner',
+      employee_id: 'EMP-OWN-01',
+      is_active: true,
+      created_at: new Date(Date.now() - 90 * 86400000).toISOString(),
+      last_login_at: new Date(Date.now() - 3600000).toISOString(),
+      last_active_at: new Date(Date.now() - 1800000).toISOString(),
+      failed_login_attempts: 0,
+    },
+    {
+      id: 'p-adm-1',
+      restaurant_id: 'rest-001-main',
+      email: 'admin@resto.os',
+      username: 'admin',
+      password_hash: 'Admin@2026!',
+      full_name: 'Rajesh Sharma',
+      phone: '+91 99000 11223',
+      role_id: 'admin',
+      employee_id: 'EMP-ADM-01',
+      is_active: true,
+      created_at: new Date(Date.now() - 60 * 86400000).toISOString(),
+      last_login_at: new Date(Date.now() - 7200000).toISOString(),
+      last_active_at: new Date(Date.now() - 3600000).toISOString(),
+      failed_login_attempts: 0,
+    },
+    {
+      id: 'p-ctr-1',
+      restaurant_id: 'rest-001-main',
+      email: 'counter@resto.os',
+      username: 'counter',
+      password_hash: 'Counter@2026!',
+      full_name: 'Priya Deshmukh',
+      phone: '+91 99000 55667',
+      role_id: 'counter',
+      employee_id: 'EMP-CTR-01',
+      is_active: true,
+      created_at: new Date(Date.now() - 45 * 86400000).toISOString(),
+      last_login_at: new Date(Date.now() - 10800000).toISOString(),
+      last_active_at: new Date(Date.now() - 5400000).toISOString(),
+      failed_login_attempts: 0,
+    },
+    {
+      id: 'p-wtr-1',
+      restaurant_id: 'rest-001-main',
+      email: 'waiter@resto.os',
+      username: 'waiter',
+      password_hash: 'Waiter@2026!',
+      full_name: 'Arun Kumar',
+      phone: '+91 99000 33445',
+      role_id: 'waiter',
+      employee_id: 'EMP-WTR-01',
+      is_active: true,
+      created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+      last_login_at: new Date(Date.now() - 14400000).toISOString(),
+      last_active_at: new Date(Date.now() - 7200000).toISOString(),
+      failed_login_attempts: 0,
+    },
+    {
+      id: 'p-kit-1',
+      restaurant_id: 'rest-001-main',
+      email: 'kitchen@resto.os',
+      username: 'kitchen',
+      password_hash: 'Kitchen@2026!',
+      full_name: 'Chef Sanjeev Anand',
+      phone: '+91 99000 44556',
+      role_id: 'kitchen',
+      employee_id: 'EMP-KIT-01',
+      is_active: true,
+      created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+      last_login_at: new Date(Date.now() - 18000000).toISOString(),
+      last_active_at: new Date(Date.now() - 9000000).toISOString(),
+      failed_login_attempts: 0,
+    },
   ];
 
   private staff: Staff[] = [
-    { id: 'st-wtr-1', restaurant_id: 'rest-001-main', profile_id: 'p-wtr-1', employee_code: 'EMP-WTR-01', designation: 'Senior Captain', shift_preference: 'evening', is_on_duty: true, profile: this.profiles[2] },
-    { id: 'st-kit-1', restaurant_id: 'rest-001-main', profile_id: 'p-kit-1', employee_code: 'EMP-KIT-01', designation: 'Head Chef', shift_preference: 'evening', is_on_duty: true, profile: this.profiles[3] },
-    { id: 'st-ctr-1', restaurant_id: 'rest-001-main', profile_id: 'p-ctr-1', employee_code: 'EMP-CTR-01', designation: 'Cashier & POS Lead', shift_preference: 'evening', is_on_duty: true, profile: this.profiles[4] },
+    { id: 'st-wtr-1', restaurant_id: 'rest-001-main', profile_id: 'p-wtr-1', employee_code: 'EMP-WTR-01', designation: 'Senior Captain', shift_preference: 'evening', is_on_duty: true, profile: this.profiles[3] },
+    { id: 'st-kit-1', restaurant_id: 'rest-001-main', profile_id: 'p-kit-1', employee_code: 'EMP-KIT-01', designation: 'Head Chef', shift_preference: 'evening', is_on_duty: true, profile: this.profiles[4] },
+    { id: 'st-ctr-1', restaurant_id: 'rest-001-main', profile_id: 'p-ctr-1', employee_code: 'EMP-CTR-01', designation: 'Cashier & POS Lead', shift_preference: 'evening', is_on_duty: true, profile: this.profiles[2] },
   ];
+
+  private securityAuditEvents: SecurityAuditEvent[] = [
+    {
+      id: 'aud-init-1',
+      restaurant_id: 'rest-001-main',
+      user_id: 'p-own-1',
+      username: 'owner',
+      role: 'owner',
+      event_type: 'LOGIN_SUCCESS',
+      result: 'SUCCESS',
+      timestamp: new Date(Date.now() - 3600000).toISOString(),
+      metadata: { initial_bootstrap: true },
+    },
+  ];
+
+  private failedLoginAttempts: Map<string, { count: number; lastAttempt: number; lockedUntil?: number }> = new Map();
+  private trustedCustomerDevices: Set<string> = new Set(['+919888877665', '+919777755443', '+919900011223']);
 
   private kitchenStations: KitchenStation[] = [
     { id: 'stn-1', restaurant_id: 'rest-001-main', code: 'MAIN_KITCHEN', name: 'Main Kitchen (Curries & Tandoor)', description: 'Tandoori breads, royal curries & gravies', display_order: 1, is_active: true },
@@ -270,6 +366,25 @@ class DatabaseAdapter {
           if (event.data?.type === 'SYNC') {
             this.loadFromStorage();
             this.lastSyncTimestamp = new Date().toISOString();
+            this.listeners.forEach(fn => {
+              try { fn(); } catch {}
+            });
+          } else if (event.data?.type === 'EVENT') {
+            this.loadFromStorage();
+            this.lastSyncTimestamp = new Date().toISOString();
+            const notifEvent = event.data.event;
+            if (notifEvent && typeof window !== 'undefined') {
+              const activeRole = (localStorage.getItem('resto_active_role') || localStorage.getItem('resto_staff_role')) as StaffRoleType;
+              const activeStaffId = localStorage.getItem('resto_staff_id') || undefined;
+              if (activeRole) {
+                voiceAnnouncementService.processNotificationEvent(
+                  notifEvent,
+                  this.voiceSettings,
+                  activeRole,
+                  activeStaffId
+                );
+              }
+            }
             this.listeners.forEach(fn => {
               try { fn(); } catch {}
             });
@@ -573,6 +688,55 @@ class DatabaseAdapter {
     return newSession;
   }
 
+  public createTableSession(params: {
+    tableId: string;
+    guestCount?: number;
+    customerName?: string;
+    customerPhone?: string;
+  }): TableSession {
+    const table = this.tables.find(t => t.id === params.tableId);
+    const permToken = this.getPermanentQRForTable(params.tableId);
+    const newSessionToken = `ses-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    const newSession: TableSession = {
+      id: `ses-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      restaurant_id: this.restaurant.id,
+      table_id: params.tableId,
+      qr_token_id: permToken?.id || `qrt-${params.tableId}`,
+      session_token: newSessionToken,
+      status: 'ACTIVE',
+      guest_count: params.guestCount || 1,
+      customer_name: params.customerName,
+      customer_phone: params.customerPhone,
+      opened_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      orders: [],
+      invoices: [],
+    };
+    if (table) {
+      table.status = 'OCCUPIED';
+    }
+    this.sessions.push(newSession);
+    this.saveToStorage();
+    this.notify();
+    return newSession;
+  }
+
+  public createOrder(params: {
+    tableSessionId: string;
+    items: Array<{ menuItemId: string; quantity: number; unitPrice?: number }>;
+    customerPhone?: string;
+    customerName?: string;
+    specialNotes?: string;
+  }): Order {
+    return this.placeOrder({
+      tableSessionId: params.tableSessionId,
+      items: params.items,
+      customerPhone: params.customerPhone,
+      customerName: params.customerName,
+      specialNotes: params.specialNotes,
+    });
+  }
+
   public handleRepeatScanApproval(
     requestId: string,
     decision: 'APPROVED_CONTINUE' | 'APPROVED_NEW' | 'REJECTED',
@@ -655,7 +819,7 @@ class DatabaseAdapter {
       throw new Error('Assigned table not found.');
     }
 
-    const orderId = `ord-${Date.now()}`;
+    const orderId = `ord-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const orderNumber = `ORD-${new Date().getHours()}${new Date().getMinutes()}-${Math.floor(100 + Math.random() * 900)}`;
 
     let subtotal = 0;
@@ -873,48 +1037,67 @@ class DatabaseAdapter {
   }
 
   // ------------------------------------------------------------------
-  // 4. WAITER CALLS & SERVICE REQUESTS
+  // 4. WAITER CALLS & REALTIME SERVICE REQUESTS
   // ------------------------------------------------------------------
   public requestService(params: {
     tableSessionId: string;
     requestType: 'CALL_WAITER' | 'REQUEST_BILL' | 'ASSISTANCE' | 'WATER' | 'CLEANING';
     notes?: string;
+    priority?: 'NORMAL' | 'URGENT';
   }): WaiterCall {
     const session = this.sessions.find(s => s.id === params.tableSessionId);
-    if (!session) throw new Error('Valid table session required');
-
-    // Prevent duplicate active calls for the same session
-    if (params.requestType === 'CALL_WAITER') {
-      const activeCall = this.waiterCalls.find(
-        c => c.table_session_id === session.id &&
-             c.request_type === 'CALL_WAITER' &&
-             (c.status === 'PENDING' || c.status === 'ACKNOWLEDGED' || c.status === 'IN_PROGRESS')
-      );
-      if (activeCall) {
-        return activeCall;
-      }
+    if (!session || session.status !== 'ACTIVE') {
+      throw new Error('Valid active table session required');
     }
 
     const table = this.tables.find(t => t.id === session.table_id);
-    const tableNumber = table ? table.table_number : 'T-00';
+    if (!table) {
+      throw new Error('Assigned table not found');
+    }
+    const tableNumber = table.table_number || 'T-00';
+
+    // Prevent duplicate active calls for the same session while one is ongoing
+    const activeCall = this.waiterCalls.find(
+      c => c.table_session_id === session.id &&
+           c.request_type === params.requestType &&
+           ['REQUESTED', 'SENT', 'ACCEPTED', 'ON_THE_WAY', 'ARRIVED', 'PENDING', 'ACKNOWLEDGED', 'IN_PROGRESS'].includes(c.status)
+    );
+    if (activeCall) {
+      return activeCall;
+    }
+
+    // Resolve assigned waiter: Table waiter -> Restaurant backup waiter -> default waiter
+    const assignedWaiterId = table.current_waiter_id || this.settings.backup_waiter_id || 'st-wtr-1';
+    const assignedWaiterStaff = this.staff.find(s => s.id === assignedWaiterId);
+    const assignedWaiterName = assignedWaiterStaff ? assignedWaiterStaff.name : 'Floor Captain';
+
+    const callId = `call-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const nowIso = new Date().toISOString();
 
     const call: WaiterCall = {
-      id: `call-${Date.now()}`,
+      id: callId,
       restaurant_id: this.restaurant.id,
       table_id: session.table_id,
       table_number: tableNumber,
       table_session_id: session.id,
-      assigned_waiter_id: table?.current_waiter_id,
+      customer_id: session.customer_id,
+      customer_name: session.customer_name,
+      customer_phone: session.customer_phone,
+      assigned_waiter_id: assignedWaiterId,
+      assigned_waiter_name: assignedWaiterName,
       request_type: params.requestType,
-      status: 'PENDING',
+      request_message: params.notes,
+      status: 'REQUESTED',
+      priority: params.priority || 'NORMAL',
       notes: params.notes,
-      created_at: new Date().toISOString(),
+      created_at: nowIso,
+      updated_at: nowIso,
     };
 
     this.waiterCalls.unshift(call);
 
     if (params.requestType === 'REQUEST_BILL') {
-      if (table) table.status = 'PAYMENT_PENDING';
+      table.status = 'PAYMENT_PENDING';
       this.addNotification({
         recipient_role: 'counter',
         title: `Bill Requested: Table ${tableNumber}`,
@@ -924,32 +1107,196 @@ class DatabaseAdapter {
         sound_type: 'BELL',
       });
       this.emitNotificationEvent('REQUEST_BILL', call.id, {
+        call_id: call.id,
         table_id: session.table_id,
         table_number: tableNumber,
-        waiter_id: table?.current_waiter_id,
+        waiter_id: assignedWaiterId,
+        waiter_name: assignedWaiterName,
       });
     }
 
     this.addNotification({
       recipient_role: 'waiter',
-      title: `${params.requestType.replace('_', ' ')}: Table ${tableNumber}`,
-      message: `Table ${tableNumber} needs immediate service.`,
+      title: `NEW WAITER CALL: Table ${tableNumber}`,
+      message: `A customer at Table Number ${tableNumber} is requesting assistance.`,
       event_type: 'CALL_WAITER',
       reference_id: call.id,
       sound_type: 'BELL',
     });
 
-    if (params.requestType === 'CALL_WAITER') {
+    if (params.requestType === 'CALL_WAITER' || params.requestType === 'ASSISTANCE') {
       this.emitNotificationEvent('CALL_WAITER', call.id, {
+        call_id: call.id,
         table_id: session.table_id,
         table_number: tableNumber,
-        waiter_id: table?.current_waiter_id,
+        waiter_id: assignedWaiterId,
+        waiter_name: assignedWaiterName,
+        customer_name: session.customer_name,
+        customer_phone: session.customer_phone,
+        notes: params.notes,
+        status: 'REQUESTED',
       });
     }
 
-    audioService.playWaiterCallBell();
     this.notify();
+    return call;
+  }
 
+  public acceptWaiterCall(callId: string, staffId?: string): WaiterCall {
+    const call = this.waiterCalls.find(c => c.id === callId);
+    if (!call) throw new Error('Waiter call not found');
+
+    call.status = 'ACCEPTED';
+    const nowIso = new Date().toISOString();
+    call.accepted_at = nowIso;
+    call.acknowledged_at = nowIso;
+    if (staffId) {
+      call.assigned_waiter_id = staffId;
+      const s = this.staff.find(st => st.id === staffId);
+      if (s) call.assigned_waiter_name = s.name;
+    }
+    const createdMs = new Date(call.created_at).getTime();
+    const acceptedMs = new Date(nowIso).getTime();
+    call.response_time_seconds = Math.max(0, Math.round((acceptedMs - createdMs) / 1000));
+    call.updated_at = nowIso;
+
+    this.notify();
+    return call;
+  }
+
+  public markWaiterCallOnTheWay(callId: string, staffId?: string): WaiterCall {
+    const call = this.waiterCalls.find(c => c.id === callId);
+    if (!call) throw new Error('Waiter call not found');
+
+    call.status = 'ON_THE_WAY';
+    const nowIso = new Date().toISOString();
+    call.on_the_way_at = nowIso;
+    if (staffId && !call.assigned_waiter_id) {
+      call.assigned_waiter_id = staffId;
+      const s = this.staff.find(st => st.id === staffId);
+      if (s) call.assigned_waiter_name = s.name;
+    }
+    call.updated_at = nowIso;
+
+    this.notify();
+    return call;
+  }
+
+  public markWaiterCallArrived(callId: string, staffId?: string): WaiterCall {
+    const call = this.waiterCalls.find(c => c.id === callId);
+    if (!call) throw new Error('Waiter call not found');
+
+    call.status = 'ARRIVED';
+    const nowIso = new Date().toISOString();
+    call.arrived_at = nowIso;
+    if (staffId && !call.assigned_waiter_id) {
+      call.assigned_waiter_id = staffId;
+      const s = this.staff.find(st => st.id === staffId);
+      if (s) call.assigned_waiter_name = s.name;
+    }
+    call.updated_at = nowIso;
+
+    this.notify();
+    return call;
+  }
+
+  public completeWaiterCall(callId: string, staffId?: string): WaiterCall {
+    const call = this.waiterCalls.find(c => c.id === callId);
+    if (!call) throw new Error('Waiter call not found');
+
+    call.status = 'COMPLETED';
+    const nowIso = new Date().toISOString();
+    call.completed_at = nowIso;
+    if (staffId && !call.assigned_waiter_id) {
+      call.assigned_waiter_id = staffId;
+      const s = this.staff.find(st => st.id === staffId);
+      if (s) call.assigned_waiter_name = s.name;
+    }
+    call.updated_at = nowIso;
+
+    this.notify();
+    return call;
+  }
+
+  public cancelWaiterCall(callId: string): WaiterCall {
+    const call = this.waiterCalls.find(c => c.id === callId);
+    if (!call) throw new Error('Waiter call not found');
+
+    call.status = 'CANCELLED';
+    call.updated_at = new Date().toISOString();
+    this.notify();
+    return call;
+  }
+
+  public reassignWaiterCall(callId: string, newWaiterId: string, adminId?: string): WaiterCall {
+    const call = this.waiterCalls.find(c => c.id === callId);
+    if (!call) throw new Error('Waiter call not found');
+
+    const s = this.staff.find(st => st.id === newWaiterId);
+    call.assigned_waiter_id = newWaiterId;
+    call.assigned_waiter_name = s ? s.name : 'Staff';
+    call.updated_at = new Date().toISOString();
+
+    this.emitNotificationEvent('CALL_WAITER', call.id, {
+      call_id: call.id,
+      table_id: call.table_id,
+      table_number: call.table_number,
+      waiter_id: newWaiterId,
+      waiter_name: call.assigned_waiter_name,
+      is_reassigned: true,
+      reassigned_by: adminId,
+    });
+
+    this.notify();
+    return call;
+  }
+
+  public escalateWaiterCall(callId: string, reason?: string): WaiterCall {
+    const call = this.waiterCalls.find(c => c.id === callId);
+    if (!call) throw new Error('Waiter call not found');
+
+    call.status = 'ESCALATED';
+    call.is_escalated = true;
+    call.escalated_at = new Date().toISOString();
+    call.updated_at = new Date().toISOString();
+
+    this.emitNotificationEvent('URGENT_ASSISTANCE', call.id, {
+      call_id: call.id,
+      table_id: call.table_id,
+      table_number: call.table_number,
+      waiter_id: call.assigned_waiter_id,
+      reason: reason || 'Waiter call escalated due to response timeout',
+    });
+
+    this.notify();
+    return call;
+  }
+
+  public updateWaiterCallStatus(callId: string, status: WaiterCallStatus, staffId?: string): WaiterCall | undefined {
+    if (status === 'ACCEPTED' || status === 'ACKNOWLEDGED') {
+      return this.acceptWaiterCall(callId, staffId);
+    }
+    if (status === 'ON_THE_WAY' || status === 'IN_PROGRESS') {
+      return this.markWaiterCallOnTheWay(callId, staffId);
+    }
+    if (status === 'ARRIVED') {
+      return this.markWaiterCallArrived(callId, staffId);
+    }
+    if (status === 'COMPLETED') {
+      return this.completeWaiterCall(callId, staffId);
+    }
+    if (status === 'CANCELLED') {
+      return this.cancelWaiterCall(callId);
+    }
+    if (status === 'ESCALATED') {
+      return this.escalateWaiterCall(callId);
+    }
+    const call = this.waiterCalls.find(c => c.id === callId);
+    if (call) {
+      call.status = status;
+      call.updated_at = new Date().toISOString();
+      this.notify();
+    }
     return call;
   }
 
@@ -957,20 +1304,95 @@ class DatabaseAdapter {
     return this.waiterCalls.find(
       c => c.table_session_id === sessionId &&
            c.request_type === 'CALL_WAITER' &&
-           (c.status === 'PENDING' || c.status === 'ACKNOWLEDGED' || c.status === 'IN_PROGRESS')
+           ['REQUESTED', 'SENT', 'ACCEPTED', 'ON_THE_WAY', 'ARRIVED', 'PENDING', 'ACKNOWLEDGED', 'IN_PROGRESS'].includes(c.status)
     );
   }
 
-  public updateWaiterCallStatus(callId: string, status: 'ACKNOWLEDGED' | 'IN_PROGRESS' | 'COMPLETED', staffId?: string) {
-    const call = this.waiterCalls.find(c => c.id === callId);
-    if (!call) return;
+  public getWaiterCallAnalytics(dateString?: string) {
+    const today = dateString || getTodayDateString();
+    const calls = this.waiterCalls.filter(c => c.created_at.startsWith(today) || !dateString);
 
-    call.status = status;
-    if (staffId) call.assigned_waiter_id = staffId;
-    if (status === 'ACKNOWLEDGED') call.acknowledged_at = new Date().toISOString();
-    if (status === 'COMPLETED') call.completed_at = new Date().toISOString();
+    const pendingCalls = calls.filter(c => ['REQUESTED', 'SENT', 'PENDING'].includes(c.status)).length;
+    const acceptedCalls = calls.filter(c => ['ACCEPTED', 'ACKNOWLEDGED'].includes(c.status)).length;
+    const onTheWayCalls = calls.filter(c => ['ON_THE_WAY', 'ARRIVED', 'IN_PROGRESS'].includes(c.status)).length;
+    const completedCalls = calls.filter(c => c.status === 'COMPLETED').length;
+    const escalatedCalls = calls.filter(c => c.status === 'ESCALATED' || c.is_escalated).length;
 
-    this.notify();
+    const answeredCalls = calls.filter(c => typeof c.response_time_seconds === 'number' && c.response_time_seconds > 0);
+    const avgResponseTimeSeconds = answeredCalls.length > 0
+      ? Math.round(answeredCalls.reduce((sum, c) => sum + (c.response_time_seconds || 0), 0) / answeredCalls.length)
+      : 0;
+
+    // Waiter-wise breakdown
+    const waiterMap: Record<string, { total: number; completed: number; responseTimes: number[] }> = {};
+    for (const call of calls) {
+      const wid = call.assigned_waiter_id || 'unassigned';
+      if (!waiterMap[wid]) {
+        waiterMap[wid] = { total: 0, completed: 0, responseTimes: [] };
+      }
+      waiterMap[wid].total += 1;
+      if (call.status === 'COMPLETED') waiterMap[wid].completed += 1;
+      if (typeof call.response_time_seconds === 'number') {
+        waiterMap[wid].responseTimes.push(call.response_time_seconds);
+      }
+    }
+
+    const waiterStats = Object.keys(waiterMap).map(wid => {
+      const staffMember = this.staff.find(s => s.id === wid);
+      const rtimes = waiterMap[wid].responseTimes;
+      const avg = rtimes.length > 0 ? Math.round(rtimes.reduce((a, b) => a + b, 0) / rtimes.length) : 0;
+      return {
+        waiterId: wid,
+        waiterName: staffMember ? staffMember.name : (wid === 'unassigned' ? 'Unassigned' : 'Server'),
+        totalAssigned: waiterMap[wid].total,
+        completed: waiterMap[wid].completed,
+        avgResponseTimeSeconds: avg,
+      };
+    });
+
+    return {
+      totalCallsToday: calls.length,
+      pendingCalls,
+      acceptedCalls,
+      onTheWayCalls,
+      completedCalls,
+      escalatedCalls,
+      avgResponseTimeSeconds,
+      waiterStats,
+    };
+  }
+
+  public checkAndEscalateWaiterCalls(timeoutSeconds?: number): number {
+    const timeout = timeoutSeconds || this.settings.waiter_escalation_timeout_seconds || 60;
+    const cutoff = Date.now() - timeout * 1000;
+    let escalatedCount = 0;
+
+    for (const call of this.waiterCalls) {
+      if (['REQUESTED', 'SENT', 'PENDING'].includes(call.status) && !call.is_escalated) {
+        const callTime = new Date(call.created_at).getTime();
+        if (callTime <= cutoff) {
+          call.is_escalated = true;
+          call.status = 'ESCALATED';
+          call.escalated_at = new Date().toISOString();
+          call.updated_at = new Date().toISOString();
+          escalatedCount++;
+
+          const table = this.tables.find(t => t.id === call.table_id);
+          this.emitNotificationEvent('URGENT_ASSISTANCE', call.id, {
+            call_id: call.id,
+            table_id: call.table_id,
+            table_number: table?.table_number || call.table_number || 'T-00',
+            waiter_id: call.assigned_waiter_id,
+            reason: `Call unattended for >${timeout} seconds`,
+          });
+        }
+      }
+    }
+
+    if (escalatedCount > 0) {
+      this.notify();
+    }
+    return escalatedCount;
   }
 
   // ------------------------------------------------------------------
@@ -1363,46 +1785,30 @@ class DatabaseAdapter {
     if (this.notificationEvents.length > 200) {
       this.notificationEvents.pop();
     }
+
+    if (this.syncChannel) {
+      try {
+        this.syncChannel.postMessage({
+          type: 'EVENT',
+          event,
+          timestamp: Date.now(),
+        });
+      } catch {}
+    }
+
     if (typeof window !== 'undefined') {
       try {
-        const activeRole = (localStorage.getItem('resto_staff_role') || 'counter') as StaffRoleType;
+        const activeRole = (localStorage.getItem('resto_active_role') || localStorage.getItem('resto_staff_role')) as StaffRoleType;
         const activeStaffId = localStorage.getItem('resto_staff_id') || undefined;
-        voiceAnnouncementService.processNotificationEvent(event, this.voiceSettings, activeRole, activeStaffId);
+        if (activeRole && ['waiter', 'counter', 'kitchen', 'admin', 'owner'].includes(activeRole)) {
+          voiceAnnouncementService.processNotificationEvent(event, this.voiceSettings, activeRole, activeStaffId);
+        }
       } catch {
         // Fallback
       }
     }
     this.notify();
     return event;
-  }
-
-  public checkAndEscalateWaiterCalls(timeoutMinutes: number = 3): number {
-    const cutoff = Date.now() - timeoutMinutes * 60 * 1000;
-    let escalatedCount = 0;
-
-    for (const call of this.waiterCalls) {
-      if (call.status === 'PENDING' && !call.is_escalated) {
-        const callTime = new Date(call.created_at).getTime();
-        if (callTime <= cutoff) {
-          call.is_escalated = true;
-          call.status = 'ESCALATED';
-          escalatedCount++;
-
-          const table = this.tables.find(t => t.id === call.table_id);
-          this.emitNotificationEvent('URGENT_ASSISTANCE', call.id, {
-            table_id: call.table_id,
-            table_number: table?.table_number || 'T-00',
-            waiter_id: call.assigned_waiter_id,
-            reason: 'Unattended waiter call exceeded timeout threshold',
-          });
-        }
-      }
-    }
-
-    if (escalatedCount > 0) {
-      this.notify();
-    }
-    return escalatedCount;
   }
 
   // ------------------------------------------------------------------
@@ -1770,8 +2176,13 @@ class DatabaseAdapter {
   // ------------------------------------------------------------------
   // 11. DIGITAL REWARD CLAIM & REDEMPTION ENGINE
   // ------------------------------------------------------------------
-  public lookupOrRecognizeCustomer(phone: string): {
+  public lookupOrRecognizeCustomer(
+    phone: string,
+    trustedToken?: string
+  ): {
     isExisting: boolean;
+    isTrusted: boolean;
+    requiresVerification: boolean;
     customer?: Customer;
     loyalty?: LoyaltyAccount;
     rewards: LoyaltyReward[];
@@ -1796,20 +2207,45 @@ class DatabaseAdapter {
         this.loyaltyAccounts.push(loyalty);
       }
       const rewards = this.loyaltyRewards.filter(r => r.loyalty_account_id === loyalty?.id);
+
+      const isTrusted = Boolean(
+        (trustedToken && this.trustedCustomerDevices.has(trustedToken)) ||
+        this.trustedCustomerDevices.has(normalized)
+      );
+
       return {
         isExisting: true,
+        isTrusted,
+        requiresVerification: !isTrusted,
         customer,
         loyalty,
-        rewards,
-        message: 'Existing customer recognized successfully.',
+        rewards: isTrusted ? rewards : [],
+        message: isTrusted
+          ? 'Welcome back! Existing customer recognized successfully.'
+          : 'Existing registered customer. Identity verification required on new device.',
       };
     }
 
     return {
       isExisting: false,
+      isTrusted: false,
+      requiresVerification: false,
       rewards: [],
       message: 'New customer mobile number. Name required to register.',
     };
+  }
+
+  public markCustomerDeviceTrusted(phone: string, deviceToken?: string) {
+    const normalized = this.normalizePhoneNumber(phone);
+    this.trustedCustomerDevices.add(normalized);
+    if (deviceToken) {
+      this.trustedCustomerDevices.add(deviceToken);
+    }
+  }
+
+  public isCustomerDeviceTrusted(phone: string, deviceToken?: string): boolean {
+    const normalized = this.normalizePhoneNumber(phone);
+    return this.trustedCustomerDevices.has(normalized) || (Boolean(deviceToken) && this.trustedCustomerDevices.has(deviceToken!));
   }
 
   public claimLoyaltyReward(params: {
@@ -2212,6 +2648,453 @@ class DatabaseAdapter {
     b.updated_at = new Date().toISOString();
     this.notify();
     return b;
+  }
+
+  // ------------------------------------------------------------------
+  // STAFF AUTHENTICATION, SESSIONS, RBAC & RATE LIMITING
+  // ------------------------------------------------------------------
+  public authenticateStaff(
+    loginId: string,
+    password: string,
+    clientIp: string = '127.0.0.1'
+  ): {
+    success: boolean;
+    profile?: Profile;
+    token?: string;
+    error?: string;
+    errorCode?: string;
+    lockedUntil?: string;
+  } {
+    const cleanLogin = (loginId || '').trim().toLowerCase();
+    const now = Date.now();
+
+    if (!cleanLogin || !password) {
+      return {
+        success: false,
+        error: 'Please enter both login ID and password.',
+        errorCode: 'INVALID_CREDENTIALS',
+      };
+    }
+
+    // Rate Limiting Check (by account identifier and IP address)
+    const accountLimit = this.failedLoginAttempts.get(cleanLogin);
+    if (accountLimit && accountLimit.lockedUntil && accountLimit.lockedUntil > now) {
+      const remainingMinutes = Math.ceil((accountLimit.lockedUntil - now) / 60000);
+      this.recordSecurityEvent({
+        event_type: 'RATE_LIMIT_TRIGGERED',
+        result: 'BLOCKED',
+        username: cleanLogin,
+        ip_address: clientIp,
+        metadata: { remaining_minutes: remainingMinutes, locked_until: new Date(accountLimit.lockedUntil).toISOString() },
+      });
+      return {
+        success: false,
+        error: `Account temporarily locked due to repeated failed attempts. Please try again in ${remainingMinutes} minute(s).`,
+        errorCode: 'LOCKED',
+        lockedUntil: new Date(accountLimit.lockedUntil).toISOString(),
+      };
+    }
+
+    const ipLimit = this.failedLoginAttempts.get(`ip_${clientIp}`);
+    if (ipLimit && ipLimit.lockedUntil && ipLimit.lockedUntil > now) {
+      const remainingMinutes = Math.ceil((ipLimit.lockedUntil - now) / 60000);
+      return {
+        success: false,
+        error: `Too many failed attempts from this device/IP. Please try again in ${remainingMinutes} minute(s).`,
+        errorCode: 'LOCKED',
+        lockedUntil: new Date(ipLimit.lockedUntil).toISOString(),
+      };
+    }
+
+    // Lookup profile by email, username, or employee_id
+    const profile = this.profiles.find(
+      p =>
+        p.email.toLowerCase() === cleanLogin ||
+        (p.username && p.username.toLowerCase() === cleanLogin) ||
+        (p.employee_id && p.employee_id.toLowerCase() === cleanLogin)
+    );
+
+    if (!profile) {
+      const lockResult = this.recordFailedAttempt(cleanLogin, clientIp);
+      this.recordSecurityEvent({
+        event_type: 'LOGIN_FAILED',
+        result: 'FAILURE',
+        username: cleanLogin,
+        ip_address: clientIp,
+        metadata: { reason: 'User not found', attempt_count: lockResult.count },
+      });
+      if (lockResult.isLocked) {
+        return {
+          success: false,
+          error: 'Too many failed login attempts from this IP address. Locked for 15 minutes.',
+          errorCode: 'LOCKED',
+          lockedUntil: lockResult.lockedUntil,
+        };
+      }
+      return {
+        success: false,
+        error: 'Invalid username or password.',
+        errorCode: 'INVALID_CREDENTIALS',
+      };
+    }
+
+    // Check account status
+    if (!profile.is_active) {
+      this.recordSecurityEvent({
+        event_type: 'LOGIN_FAILED',
+        result: 'BLOCKED',
+        user_id: profile.id,
+        username: profile.username || profile.email,
+        role: profile.role_id,
+        ip_address: clientIp,
+        metadata: { reason: 'Account deactivated' },
+      });
+      return {
+        success: false,
+        error: 'Account is deactivated. Please contact your restaurant administrator.',
+        errorCode: 'ACCOUNT_DEACTIVATED',
+      };
+    }
+
+    // Verify Password
+    const passwordValid = profile.password_hash === password;
+    if (!passwordValid) {
+      const lockResult = this.recordFailedAttempt(cleanLogin, clientIp, profile);
+      this.recordSecurityEvent({
+        event_type: 'LOGIN_FAILED',
+        result: 'FAILURE',
+        user_id: profile.id,
+        username: profile.username || profile.email,
+        role: profile.role_id,
+        ip_address: clientIp,
+        metadata: { reason: 'Invalid password', attempt_count: lockResult.count },
+      });
+
+      if (lockResult.isLocked) {
+        return {
+          success: false,
+          error: 'Account temporarily locked due to repeated failed login attempts (5/5). Locked for 15 minutes.',
+          errorCode: 'LOCKED',
+          lockedUntil: lockResult.lockedUntil,
+        };
+      }
+
+      return {
+        success: false,
+        error: 'Invalid username or password.',
+        errorCode: 'INVALID_CREDENTIALS',
+      };
+    }
+
+    // Success! Reset failed attempts
+    this.failedLoginAttempts.delete(cleanLogin);
+    this.failedLoginAttempts.delete(`ip_${clientIp}`);
+    profile.failed_login_attempts = 0;
+    profile.locked_until = null;
+    profile.last_login_at = new Date().toISOString();
+    profile.last_active_at = new Date().toISOString();
+
+    const sessionToken = `resto_staff_${profile.id}_${Date.now()}`;
+
+    this.recordSecurityEvent({
+      event_type: 'LOGIN_SUCCESS',
+      result: 'SUCCESS',
+      user_id: profile.id,
+      username: profile.username || profile.email,
+      role: profile.role_id,
+      ip_address: clientIp,
+      metadata: { session_token: sessionToken.slice(0, 16) + '...' },
+    });
+
+    this.notify();
+    return {
+      success: true,
+      profile,
+      token: sessionToken,
+    };
+  }
+
+  private recordFailedAttempt(
+    accountKey: string,
+    clientIp: string,
+    profile?: Profile
+  ): { count: number; isLocked: boolean; lockedUntil?: string } {
+    const now = Date.now();
+    const lockWindow = 15 * 60 * 1000; // 15 minutes
+    const maxAttempts = 5;
+
+    // Track for account
+    const accRecord = this.failedLoginAttempts.get(accountKey) || { count: 0, lastAttempt: now };
+    if (now - accRecord.lastAttempt > lockWindow && (!accRecord.lockedUntil || accRecord.lockedUntil <= now)) {
+      accRecord.count = 0;
+    }
+    accRecord.count += 1;
+    accRecord.lastAttempt = now;
+
+    // Track for IP
+    const ipKey = `ip_${clientIp}`;
+    const ipRecord = this.failedLoginAttempts.get(ipKey) || { count: 0, lastAttempt: now };
+    if (now - ipRecord.lastAttempt > lockWindow && (!ipRecord.lockedUntil || ipRecord.lockedUntil <= now)) {
+      ipRecord.count = 0;
+    }
+    ipRecord.count += 1;
+    ipRecord.lastAttempt = now;
+
+    let isLocked = false;
+    let lockedUntilStr: string | undefined;
+
+    if (accRecord.count >= maxAttempts || ipRecord.count >= maxAttempts) {
+      const lockUntil = now + lockWindow;
+      accRecord.lockedUntil = lockUntil;
+      ipRecord.lockedUntil = lockUntil;
+      isLocked = true;
+      lockedUntilStr = new Date(lockUntil).toISOString();
+      if (profile) {
+        profile.failed_login_attempts = accRecord.count;
+        profile.locked_until = lockedUntilStr;
+      }
+    }
+
+    this.failedLoginAttempts.set(accountKey, accRecord);
+    this.failedLoginAttempts.set(ipKey, ipRecord);
+    return { count: accRecord.count, isLocked, lockedUntil: lockedUntilStr };
+  }
+
+  public changeStaffPassword(
+    profileId: string,
+    oldPass: string,
+    newPass: string,
+    clientIp: string = '127.0.0.1'
+  ): { success: boolean; message: string } {
+    const profile = this.profiles.find(p => p.id === profileId);
+    if (!profile) throw new Error('Staff profile not found.');
+    if (profile.password_hash !== oldPass) {
+      this.recordSecurityEvent({
+        event_type: 'PASSWORD_CHANGE',
+        result: 'FAILURE',
+        user_id: profile.id,
+        username: profile.username || profile.email,
+        role: profile.role_id,
+        ip_address: clientIp,
+        metadata: { reason: 'Incorrect old password' },
+      });
+      throw new Error('Current password does not match.');
+    }
+    if (!newPass || newPass.length < 6) {
+      throw new Error('New password must be at least 6 characters.');
+    }
+    profile.password_hash = newPass;
+    this.recordSecurityEvent({
+      event_type: 'PASSWORD_CHANGE',
+      result: 'SUCCESS',
+      user_id: profile.id,
+      username: profile.username || profile.email,
+      role: profile.role_id,
+      ip_address: clientIp,
+    });
+    this.notify();
+    return { success: true, message: 'Password changed successfully.' };
+  }
+
+  public adminResetStaffPassword(
+    adminProfileId: string,
+    targetProfileId: string,
+    newPass: string,
+    clientIp: string = '127.0.0.1'
+  ): { success: boolean; message: string } {
+    const admin = this.profiles.find(p => p.id === adminProfileId);
+    if (!admin || (admin.role_id !== 'admin' && admin.role_id !== 'owner')) {
+      throw new Error('Unauthorized: Only Admin or Owner can reset staff passwords.');
+    }
+    const target = this.profiles.find(p => p.id === targetProfileId);
+    if (!target) throw new Error('Target staff profile not found.');
+    if (!newPass || newPass.length < 6) {
+      throw new Error('New password must be at least 6 characters.');
+    }
+    target.password_hash = newPass;
+    target.failed_login_attempts = 0;
+    target.locked_until = null;
+    this.recordSecurityEvent({
+      event_type: 'PASSWORD_RESET',
+      result: 'SUCCESS',
+      user_id: target.id,
+      username: target.username || target.email,
+      role: target.role_id,
+      ip_address: clientIp,
+      metadata: { reset_by: admin.role_id, admin_id: admin.id },
+    });
+    this.notify();
+    return { success: true, message: `Password reset successfully for ${target.full_name}.` };
+  }
+
+  public createStaffAccount(
+    creatorRole: StaffRoleType,
+    params: StaffAccountCreateParams,
+    clientIp: string = '127.0.0.1'
+  ): { success: boolean; profile: Profile; staff: Staff } {
+    if (creatorRole !== 'owner' && creatorRole !== 'admin') {
+      this.recordSecurityEvent({
+        event_type: 'UNAUTHORIZED_ACCESS',
+        result: 'BLOCKED',
+        role: creatorRole,
+        ip_address: clientIp,
+        metadata: { action: 'createStaffAccount', attempted_role: params.role },
+      });
+      throw new Error('Unauthorized: Only Owner or Admin can create staff accounts.');
+    }
+    if (creatorRole === 'admin' && params.role === 'owner') {
+      throw new Error('Forbidden: Admins cannot create Owner accounts.');
+    }
+
+    const cleanUsername = params.loginId.trim().toLowerCase();
+    const cleanEmail = params.email.trim().toLowerCase();
+    const existing = this.profiles.find(
+      p => p.email.toLowerCase() === cleanEmail || (p.username && p.username.toLowerCase() === cleanUsername)
+    );
+    if (existing) {
+      throw new Error(`Username or email '${cleanUsername}' is already registered.`);
+    }
+
+    const profileId = `p-${params.role.slice(0, 3)}-${Date.now()}`;
+    const newProfile: Profile = {
+      id: profileId,
+      restaurant_id: this.restaurant.id,
+      email: cleanEmail,
+      username: cleanUsername,
+      password_hash: params.password,
+      full_name: params.fullName.trim(),
+      phone: params.phone,
+      role_id: params.role,
+      employee_id: params.employeeCode || `EMP-${params.role.toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`,
+      is_active: true,
+      created_at: new Date().toISOString(),
+      failed_login_attempts: 0,
+    };
+    this.profiles.push(newProfile);
+
+    const staffId = `st-${params.role.slice(0, 3)}-${Date.now()}`;
+    const newStaff: Staff = {
+      id: staffId,
+      restaurant_id: this.restaurant.id,
+      profile_id: profileId,
+      employee_code: newProfile.employee_id!,
+      designation: params.designation || params.role.toUpperCase(),
+      shift_preference: params.shiftPreference || 'morning',
+      is_on_duty: true,
+      profile: newProfile,
+    };
+    this.staff.push(newStaff);
+
+    this.recordSecurityEvent({
+      event_type: 'STAFF_CREATED',
+      result: 'SUCCESS',
+      user_id: profileId,
+      username: cleanUsername,
+      role: params.role,
+      ip_address: clientIp,
+      metadata: { created_by: creatorRole },
+    });
+
+    this.notify();
+    return { success: true, profile: newProfile, staff: newStaff };
+  }
+
+  public updateStaffStatus(
+    updaterRole: StaffRoleType,
+    targetProfileId: string,
+    isActive: boolean,
+    reason?: string,
+    clientIp: string = '127.0.0.1'
+  ): Profile {
+    if (updaterRole !== 'owner' && updaterRole !== 'admin') {
+      throw new Error('Unauthorized: Only Owner or Admin can update staff status.');
+    }
+    const profile = this.profiles.find(p => p.id === targetProfileId);
+    if (!profile) throw new Error('Staff profile not found.');
+
+    if (profile.role_id === 'owner' && updaterRole !== 'owner') {
+      throw new Error('Forbidden: Cannot deactivate an Owner account.');
+    }
+
+    profile.is_active = isActive;
+    this.recordSecurityEvent({
+      event_type: isActive ? 'STAFF_ACTIVATED' : 'STAFF_DEACTIVATED',
+      result: 'SUCCESS',
+      user_id: profile.id,
+      username: profile.username || profile.email,
+      role: profile.role_id,
+      ip_address: clientIp,
+      metadata: { updated_by: updaterRole, reason },
+    });
+
+    this.notify();
+    return profile;
+  }
+
+  public updateStaffRole(
+    updaterRole: StaffRoleType,
+    targetProfileId: string,
+    newRole: StaffRoleType,
+    clientIp: string = '127.0.0.1'
+  ): Profile {
+    if (updaterRole !== 'owner' && updaterRole !== 'admin') {
+      throw new Error('Unauthorized: Only Owner or Admin can change staff roles.');
+    }
+    if (updaterRole === 'admin' && newRole === 'owner') {
+      throw new Error('Forbidden: Admins cannot promote users to Owner.');
+    }
+    const profile = this.profiles.find(p => p.id === targetProfileId);
+    if (!profile) throw new Error('Staff profile not found.');
+
+    const oldRole = profile.role_id;
+    profile.role_id = newRole;
+
+    this.recordSecurityEvent({
+      event_type: 'ROLE_CHANGED',
+      result: 'SUCCESS',
+      user_id: profile.id,
+      username: profile.username || profile.email,
+      role: newRole,
+      ip_address: clientIp,
+      metadata: { updated_by: updaterRole, previous_role: oldRole, new_role: newRole },
+    });
+
+    this.notify();
+    return profile;
+  }
+
+  public recordSecurityEvent(
+    event: Omit<SecurityAuditEvent, 'id' | 'restaurant_id' | 'timestamp'>
+  ): SecurityAuditEvent {
+    const auditEvent: SecurityAuditEvent = {
+      id: `aud-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      restaurant_id: this.restaurant.id,
+      timestamp: new Date().toISOString(),
+      ...event,
+    };
+    this.securityAuditEvents.unshift(auditEvent);
+    return auditEvent;
+  }
+
+  public getSecurityAuditEvents(callerRole?: StaffRoleType): SecurityAuditEvent[] {
+    if (callerRole && callerRole !== 'owner' && callerRole !== 'admin') {
+      return [];
+    }
+    return this.securityAuditEvents;
+  }
+
+  public resetRateLimit(identifier: string) {
+    const clean = identifier.trim().toLowerCase();
+    const profile = this.profiles.find(
+      p => p.email.toLowerCase() === clean || (p.username && p.username.toLowerCase() === clean)
+    );
+    if (profile) {
+      profile.failed_login_attempts = 0;
+      profile.locked_until = null;
+    }
+    this.failedLoginAttempts.delete(clean);
+    this.failedLoginAttempts.delete(`ip_${clean}`);
+    this.notify();
   }
 
   // Admin Mutations

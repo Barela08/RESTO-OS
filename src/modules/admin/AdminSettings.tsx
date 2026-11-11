@@ -26,6 +26,7 @@ export const AdminSettings: React.FC = () => {
   const settings = dbAdapter.getSettings();
   const voice = dbAdapter.getVoiceSettings();
   const payment = dbAdapter.getPaymentSettings();
+  const staff = dbAdapter.getStaff();
 
   const [activeTab, setActiveTab] = useState<'GENERAL' | 'VOICE' | 'PAYMENT'>('GENERAL');
 
@@ -41,6 +42,12 @@ export const AdminSettings: React.FC = () => {
   const [cgstRate, setCgstRate] = useState(settings.cgst_rate);
   const [sgstRate, setSgstRate] = useState(settings.sgst_rate);
   const [loyaltyThreshold, setLoyaltyThreshold] = useState(settings.loyalty_min_order_amount);
+
+  // Waiter Escalation Policy State
+  const [waiterEscalationTimeout, setWaiterEscalationTimeout] = useState(
+    settings.waiter_escalation_timeout_seconds || 60
+  );
+  const [backupWaiterId, setBackupWaiterId] = useState(settings.backup_waiter_id || '');
 
   // Voice Settings State
   const [voiceEnabled, setVoiceEnabled] = useState(voice.voice_enabled);
@@ -113,7 +120,14 @@ export const AdminSettings: React.FC = () => {
       repeat_count: repeatCount,
       enabled_events: enabledEvents,
     });
-    triggerSaved('Voice announcement settings updated.');
+    dbAdapter.updateSettings({
+      waiter_escalation_timeout_seconds: waiterEscalationTimeout,
+      backup_waiter_id: backupWaiterId || undefined,
+      waiter_sound_volume: volume,
+      waiter_voice_enabled: voiceEnabled,
+      waiter_voice_language: language,
+    });
+    triggerSaved('Voice announcement & waiter escalation settings updated.');
   };
 
   const handleSavePayment = (e: React.FormEvent) => {
@@ -535,9 +549,75 @@ export const AdminSettings: React.FC = () => {
               </div>
             </div>
 
+            {/* Waiter Calling & Floor Escalation Configuration */}
+            <div className="bg-white rounded-2xl border border-slate-100 shadow-card p-6 space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                    <Bell className="w-4 h-4 text-amber-500" />
+                    <span>Waiter Calling & Automatic Escalation Policy</span>
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Configure SLA timeouts and fallback staff when customer calls are unattended
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Escalation SLA Timeout (Seconds)
+                  </label>
+                  <Input
+                    type="number"
+                    min="15"
+                    max="600"
+                    step="5"
+                    value={waiterEscalationTimeout}
+                    onChange={(e) => setWaiterEscalationTimeout(parseInt(e.target.value, 10) || 60)}
+                    placeholder="60"
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    If an assigned waiter does not accept within this time, the call is automatically marked ESCALATED.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Backup Waiter / Fallback Dispatch
+                  </label>
+                  <select
+                    value={backupWaiterId}
+                    onChange={(e) => setBackupWaiterId(e.target.value)}
+                    className="w-full p-2.5 border border-slate-300 rounded-xl text-xs font-bold bg-white text-slate-900 focus:ring-2 focus:ring-brand-purple"
+                  >
+                    <option value="">-- Broadcast to All Floor Staff & Admin --</option>
+                    {staff.map((st) => (
+                      <option key={st.id} value={st.id}>
+                        {st.name || st.profile?.full_name || 'Staff'} ({(st.role || st.profile?.role_id || 'Staff').toUpperCase()})
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Designated staff member who receives urgent escalation alerts when primary server is occupied.
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-amber-50/60 border border-amber-200/60 text-[11px] text-amber-900 space-y-1">
+                <p className="font-bold flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Escalation Protocol Behavior:</span>
+                </p>
+                <p>
+                  Upon escalation, the call status transitions to <strong className="font-mono">ESCALATED</strong>, urgency shifts to <strong className="font-mono">URGENT</strong>, and an <strong className="font-mono">URGENT_ASSISTANCE</strong> voice alert is immediately triggered on both the backup waiter terminal and manager dashboard.
+                </p>
+              </div>
+            </div>
+
             <div className="flex justify-end">
               <Button type="submit" variant="primary" size="lg" leftIcon={<Save className="w-4 h-4" />}>
-                Save Voice Announcement Settings
+                Save Voice Announcement & Escalation Settings
               </Button>
             </div>
           </form>

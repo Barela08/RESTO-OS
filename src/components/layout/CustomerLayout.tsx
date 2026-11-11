@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useSessionStore } from '../../store/sessionStore';
 import { useCartStore } from '../../store/cartStore';
 import { useCustomerAuthStore } from '../../store/customerAuthStore';
 import { dbAdapter } from '../../services/databaseAdapter';
 import { formatCurrency } from '../../utils/currency';
+import { WaiterCall } from '../../types';
 import {
   Home,
   UtensilsCrossed,
@@ -45,12 +46,34 @@ export const CustomerLayout: React.FC<{ children: React.ReactNode }> = ({ childr
   // Desktop Profile Dropdown state
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
 
+  // Active waiter call for current table session
+  const [activeCall, setActiveCall] = useState<WaiterCall | undefined>(() =>
+    currentSession ? dbAdapter.getActiveWaiterCallForSession(currentSession.id) : undefined
+  );
+
+  useEffect(() => {
+    const checkActiveCall = () => {
+      if (currentSession) {
+        setActiveCall(dbAdapter.getActiveWaiterCallForSession(currentSession.id));
+      } else {
+        setActiveCall(undefined);
+      }
+    };
+    checkActiveCall();
+    return dbAdapter.subscribe(checkActiveCall);
+  }, [currentSession]);
+
   const itemCount = getItemCount();
   const cartTotal = getTotal();
 
   const handleSendAssistance = () => {
     if (!currentSession) {
       setIsTableModalOpen(true);
+      return;
+    }
+    // Prevent duplicate calls if one is active
+    if (assistanceType === 'CALL_WAITER' && activeCall) {
+      setIsAssistanceModalOpen(false);
       return;
     }
     dbAdapter.createServiceRequest({
@@ -64,6 +87,10 @@ export const CustomerLayout: React.FC<{ children: React.ReactNode }> = ({ childr
       setIsAssistanceModalOpen(false);
       setAssistanceNotes('');
     }, 1800);
+  };
+
+  const handleCancelCall = (callId: string) => {
+    dbAdapter.cancelWaiterCall(callId);
   };
 
   // Nav Links Configuration
@@ -385,6 +412,106 @@ export const CustomerLayout: React.FC<{ children: React.ReactNode }> = ({ childr
       {/* 3. MAIN CONTENT CONTAINER (RESPONSIVE)                         */}
       {/* ============================================================== */}
       <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6 lg:py-8">
+        {/* Realtime Waiter Call Live Status Banner */}
+        {activeCall && (
+          <div className="mb-6 bg-white border-2 border-orange-200 rounded-3xl p-4 sm:p-5 shadow-card transition-all">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-orange-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-orange-100 text-brand-orange flex items-center justify-center font-bold shrink-0">
+                  <PhoneCall className="w-5 h-5 animate-pulse" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider bg-orange-100 text-brand-orange px-2 py-0.5 rounded-full">
+                      Live Waiter Assistance
+                    </span>
+                    <span className="text-xs font-mono text-slate-400">
+                      ID: {activeCall.id.slice(0, 14)}
+                    </span>
+                  </div>
+                  <h3 className="text-sm sm:text-base font-extrabold text-slate-900 mt-0.5">
+                    {['REQUESTED', 'SENT', 'PENDING'].includes(activeCall.status)
+                      ? `Waiter request sent for Table ${table?.table_number || ''}`
+                      : ['ACCEPTED', 'ACKNOWLEDGED'].includes(activeCall.status)
+                      ? `Server accepted your request!`
+                      : ['ON_THE_WAY', 'IN_PROGRESS'].includes(activeCall.status)
+                      ? `Server is on the way to your table!`
+                      : activeCall.status === 'ARRIVED'
+                      ? `Server has arrived at Table ${table?.table_number || ''}!`
+                      : `Assistance completed`}
+                  </h3>
+                </div>
+              </div>
+
+              {activeCall.status !== 'COMPLETED' && activeCall.status !== 'ARRIVED' && (
+                <button
+                  onClick={() => handleCancelCall(activeCall.id)}
+                  className="text-xs font-bold text-slate-500 hover:text-red-600 transition-colors self-end sm:self-auto py-1 px-2.5 rounded-lg hover:bg-red-50 border border-slate-200"
+                >
+                  Cancel Call
+                </button>
+              )}
+            </div>
+
+            {/* Visual 4-Step Progress Bar */}
+            <div className="mt-4 pt-1">
+              <div className="grid grid-cols-4 gap-2 text-center">
+                {/* Step 1: Request Sent */}
+                <div className="flex flex-col items-center">
+                  <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
+                    ['REQUESTED', 'SENT', 'ACCEPTED', 'ON_THE_WAY', 'ARRIVED', 'COMPLETED', 'PENDING', 'ACKNOWLEDGED', 'IN_PROGRESS'].includes(activeCall.status)
+                      ? 'bg-brand-orange text-white ring-4 ring-orange-100'
+                      : 'bg-slate-100 text-slate-400'
+                  }`}>
+                    1
+                  </div>
+                  <span className="text-[11px] font-extrabold text-slate-800 mt-1.5 leading-tight">Request Sent</span>
+                  <span className="text-[9px] text-slate-400">Server alerted</span>
+                </div>
+
+                {/* Step 2: Accepted */}
+                <div className="flex flex-col items-center">
+                  <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
+                    ['ACCEPTED', 'ON_THE_WAY', 'ARRIVED', 'COMPLETED', 'ACKNOWLEDGED', 'IN_PROGRESS'].includes(activeCall.status)
+                      ? 'bg-blue-600 text-white ring-4 ring-blue-100'
+                      : 'bg-slate-100 text-slate-400'
+                  }`}>
+                    2
+                  </div>
+                  <span className="text-[11px] font-extrabold text-slate-800 mt-1.5 leading-tight">Accepted</span>
+                  <span className="text-[9px] text-slate-400">{activeCall.assigned_waiter_name || 'Server'}</span>
+                </div>
+
+                {/* Step 3: On The Way */}
+                <div className="flex flex-col items-center">
+                  <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
+                    ['ON_THE_WAY', 'ARRIVED', 'COMPLETED', 'IN_PROGRESS'].includes(activeCall.status)
+                      ? 'bg-purple-600 text-white ring-4 ring-purple-100'
+                      : 'bg-slate-100 text-slate-400'
+                  }`}>
+                    3
+                  </div>
+                  <span className="text-[11px] font-extrabold text-slate-800 mt-1.5 leading-tight">On The Way</span>
+                  <span className="text-[9px] text-slate-400">Walking to table</span>
+                </div>
+
+                {/* Step 4: Arrived */}
+                <div className="flex flex-col items-center">
+                  <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
+                    ['ARRIVED', 'COMPLETED'].includes(activeCall.status)
+                      ? 'bg-green-600 text-white ring-4 ring-green-100'
+                      : 'bg-slate-100 text-slate-400'
+                  }`}>
+                    4
+                  </div>
+                  <span className="text-[11px] font-extrabold text-slate-800 mt-1.5 leading-tight">Arrived</span>
+                  <span className="text-[9px] text-slate-400">At Table {table?.table_number || ''}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {children}
       </main>
 

@@ -136,7 +136,8 @@ class VoiceAnnouncementService {
     language: VoiceLanguage = 'hi',
     targetRole?: StaffRoleType
   ): string {
-    const tableNum = payload.table_number || (payload.table_id ? `T-${payload.table_id.slice(-2)}` : 'Table');
+    const rawTable = payload.table_number || (payload.table_id ? `Table ${payload.table_id.slice(-2)}` : 'Table');
+    const tableNum = String(rawTable);
     const waiterName = payload.waiter_name;
 
     if (language === 'hi') {
@@ -301,6 +302,17 @@ class VoiceAnnouncementService {
     }
   }
 
+  /**
+   * Ensure natural table number pronunciation in speech synthesis (e.g. "Table number 10", never "T-10" or "T10")
+   */
+  public getSpokenAnnouncementText(text: string): string {
+    return text
+      .replace(/\bTable\s+number\s+T-0*(\d+)\b/gi, 'Table number $1')
+      .replace(/\bTable\s+T-0*(\d+)\b/gi, 'Table number $1')
+      .replace(/\bT-0*(\d+)\b/gi, 'Table number $1')
+      .replace(/\bTable\s+T(\d+)\b/gi, 'Table number $1');
+  }
+
   private processNextInQueue() {
     if (this.queue.length === 0) {
       this.isSpeaking = false;
@@ -315,12 +327,7 @@ class VoiceAnnouncementService {
     this.isSpeaking = true;
     const current = this.queue[0];
 
-    // Ensure natural table number pronunciation in speech synthesis (e.g. "Table number 10", never "T-10" or "T10")
-    const spokenText = current.text
-      .replace(/\bTable\s+number\s+T-0*(\d+)\b/gi, 'Table number $1')
-      .replace(/\bTable\s+T-0*(\d+)\b/gi, 'Table number $1')
-      .replace(/\bT-0*(\d+)\b/gi, 'Table number $1')
-      .replace(/\bTable\s+T(\d+)\b/gi, 'Table number $1');
+    const spokenText = this.getSpokenAnnouncementText(current.text);
 
     const utterance = new SpeechSynthesisUtterance(spokenText);
     utterance.volume = Math.max(0.1, Math.min(1.0, current.volume));

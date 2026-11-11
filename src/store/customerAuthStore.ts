@@ -1,6 +1,6 @@
 // ====================================================================
 // RESTO OS - Customer Authentication & Verified Identity Store
-// Supports Mobile OTP verification, Existing User Recognition & Loyalty Sync
+// Supports Mobile Auto-Recognition, OTP verification, & Loyalty Sync
 // ====================================================================
 
 import { create } from 'zustand';
@@ -19,6 +19,15 @@ interface CustomerAuthState {
   loginError: string | null;
 
   // Actions
+  lookupAndRecognize: (phone: string) => {
+    isExisting: boolean;
+    isTrusted: boolean;
+    requiresVerification: boolean;
+    customer?: Customer;
+    loyalty?: LoyaltyAccount;
+    rewards: LoyaltyReward[];
+    message: string;
+  };
   requestOtp: (phone: string) => { success: boolean; message: string; otpCode?: string };
   verifyOtp: (phone: string, otpCode: string) => {
     success: boolean;
@@ -51,6 +60,16 @@ const safeStorage = {
   },
 };
 
+const DEVICE_TOKEN_KEY = 'resto_device_token';
+export function getOrCreateDeviceToken(): string {
+  let token = safeStorage.get(DEVICE_TOKEN_KEY);
+  if (!token) {
+    token = 'dev_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
+    safeStorage.set(DEVICE_TOKEN_KEY, token);
+  }
+  return token;
+}
+
 export const useCustomerAuthStore = create<CustomerAuthState>((set, get) => {
   // Check if customer session is preserved in localStorage
   const savedCustomerJson = safeStorage.get('resto_customer_auth');
@@ -76,17 +95,7 @@ export const useCustomerAuthStore = create<CustomerAuthState>((set, get) => {
     }
   }
 
-  // Fallback demo customer if already in DB for immediate exploration
-  if (!initialCustomer) {
-    const demoCust = dbAdapter.getCustomers()[0];
-    if (demoCust) {
-      initialCustomer = demoCust;
-      initialLoyalty = dbAdapter.getLoyaltyAccounts().find(a => a.customer_id === demoCust.id) || null;
-      if (initialLoyalty) {
-        initialRewards = dbAdapter.getLoyaltyRewards().filter(r => r.loyalty_account_id === initialLoyalty?.id);
-      }
-    }
-  }
+  // NOTE: We do NOT auto-assign a demo customer here. Clean visitors must start as unauthenticated guests.
 
   return {
     customer: initialCustomer,
@@ -97,6 +106,40 @@ export const useCustomerAuthStore = create<CustomerAuthState>((set, get) => {
     otpPhone: '',
     activeOtpCode: undefined,
     loginError: null,
+
+    lookupAndRecognize: (phone: string) => {
+      set({ loginError: null });
+      const deviceToken = getOrCreateDeviceToken();
+      const res = dbAdapter.lookupOrRecognizeCustomer(phone, deviceToken);
+
+      if (res.isExisting && res.isTrusted && res.customer) {
+        const cust = res.customer;
+        const loyalty = res.loyalty || null;
+        const rewards = res.rewards || [];
+
+        safeStorage.set('resto_customer_auth', JSON.stringify(cust));
+
+        // Sync with active table session if present
+        const currentSession = useSessionStore.getState().currentSession;
+        if (currentSession) {
+          dbAdapter.linkSessionToCustomer(currentSession.id, cust.id);
+          useSessionStore.getState().setCustomerInfo(cust.full_name, cust.phone);
+        }
+
+        set({
+          customer: cust,
+          loyaltyAccount: loyalty,
+          rewards,
+          isLoggedIn: true,
+          isOtpSent: false,
+          otpPhone: '',
+          activeOtpCode: undefined,
+          loginError: null,
+        });
+      }
+
+      return res;
+    },
 
     requestOtp: (phone: string) => {
       set({ loginError: null });
@@ -132,6 +175,9 @@ export const useCustomerAuthStore = create<CustomerAuthState>((set, get) => {
           message: res.message,
         };
       }
+
+      const deviceToken = getOrCreateDeviceToken();
+      dbAdapter.markCustomerDeviceTrusted(phone, deviceToken);
 
       if (res.customer) {
         // Existing registered customer recognized!
@@ -178,6 +224,9 @@ export const useCustomerAuthStore = create<CustomerAuthState>((set, get) => {
     completeRegistration: (phone: string, fullName: string) => {
       const { customer, loyalty } = dbAdapter.registerOrCompleteCustomer({ phone, fullName });
       const rewards = dbAdapter.getLoyaltyRewards().filter(r => r.loyalty_account_id === loyalty.id);
+
+      const deviceToken = getOrCreateDeviceToken();
+      dbAdapter.markCustomerDeviceTrusted(phone, deviceToken);
 
       safeStorage.set('resto_customer_auth', JSON.stringify(customer));
 

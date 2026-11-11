@@ -78,13 +78,23 @@ export const StaffLayout: React.FC<StaffLayoutProps> = ({
       {/* Top Bar for Staff Operations */}
       <header className="h-16 bg-[#111827] border-b border-slate-800 px-6 flex items-center justify-between sticky top-0 z-30 shadow-md">
         <div className="flex items-center gap-4">
-          <Link
-            to="/admin"
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
-            title="Back to Admin Dashboard"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </Link>
+          {(currentProfile?.role_id === 'admin' || currentProfile?.role_id === 'owner') ? (
+            <Link
+              to={currentProfile.role_id === 'owner' ? '/owner' : '/admin'}
+              className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+              title="Return to Management Console"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </Link>
+          ) : (
+            <button
+              onClick={() => navigate(-1)}
+              className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+              title="Go Back"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+          )}
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-base font-extrabold text-white tracking-wide">{title}</h1>

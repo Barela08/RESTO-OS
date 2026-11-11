@@ -120,25 +120,19 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
           </button>
         </div>
 
-        {/* Quick Role Switcher Banner */}
+        {/* Authenticated Staff Identity Banner */}
         <div className="px-4 py-3 bg-slate-900/60 border-b border-slate-800">
           <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-            <span>Current Role</span>
-            <span className="px-1.5 py-0.5 rounded bg-brand-purple/20 text-brand-purple text-[10px] uppercase font-bold">
-              {role || 'staff'}
+            <span className="font-semibold text-slate-300 truncate max-w-[140px]">
+              {currentProfile?.full_name || 'Staff Member'}
+            </span>
+            <span className="px-1.5 py-0.5 rounded bg-brand-purple/20 text-brand-purple text-[10px] uppercase font-black">
+              {role || 'STAFF'}
             </span>
           </div>
-          <select
-            value={role || 'admin'}
-            onChange={handleRoleChange}
-            className="w-full bg-slate-800 text-xs text-white rounded-lg px-2.5 py-1.5 border border-slate-700 focus:outline-none focus:border-brand-purple"
-          >
-            <option value="admin">Admin Dashboard</option>
-            <option value="owner">Owner Analytics</option>
-            <option value="counter">Cash Counter (POS)</option>
-            <option value="kitchen">Kitchen Display (KDS)</option>
-            <option value="waiter">Waiter Station</option>
-          </select>
+          <p className="text-[10px] text-slate-500 font-mono">
+            {currentProfile?.employee_id || currentProfile?.email}
+          </p>
         </div>
 
         {/* Navigation Items */}

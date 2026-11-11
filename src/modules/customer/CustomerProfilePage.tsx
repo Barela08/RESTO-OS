@@ -45,6 +45,7 @@ export const CustomerProfilePage: React.FC = () => {
     loyaltyAccount,
     rewards,
     isLoggedIn,
+    lookupAndRecognize,
     requestOtp,
     verifyOtp,
     completeRegistration,
@@ -103,6 +104,28 @@ export const CustomerProfilePage: React.FC = () => {
 
   const totalSpent = customerOrders.reduce((sum, o) => sum + o.total_amount, 0);
 
+  // Auto-recognition when phone number is typed
+  const handlePhoneInputChange = (val: string) => {
+    setLoginPhone(val);
+    const clean = val.replace(/\D/g, '');
+    if (clean.length === 10) {
+      const existingCheck = lookupAndRecognize(val);
+      if (existingCheck.isExisting && existingCheck.isTrusted && existingCheck.customer) {
+        setAuthSuccess(`Welcome back, ${existingCheck.customer.full_name}! Your profile and rewards have been recognized.`);
+        refreshLoyaltyData();
+        return;
+      }
+      if (existingCheck.isExisting && !existingCheck.isTrusted) {
+        const res = requestOtp(val);
+        if (res.success) {
+          setIsOtpStep(true);
+          setAuthSuccess('Existing account detected. For your security, enter the 6-digit OTP.');
+          if (res.otpCode) setLoginOtp(res.otpCode);
+        }
+      }
+    }
+  };
+
   // Handle Send OTP & Returning Customer Recognition (Bug 4)
   const handleSendOtp = (e: React.FormEvent) => {
     e.preventDefault();
@@ -113,30 +136,25 @@ export const CustomerProfilePage: React.FC = () => {
       return;
     }
 
-    // Case A: Check if phone is an existing registered customer (Auto-recognition without re-prompt or OTP)
-    const existingCheck = dbAdapter.lookupOrRecognizeCustomer(loginPhone);
-    if (existingCheck.isExisting && existingCheck.customer) {
-      const cust = existingCheck.customer;
-      useCustomerAuthStore.setState({
-        customer: cust,
-        loyaltyAccount: existingCheck.loyalty || null,
-        rewards: existingCheck.rewards,
-        isLoggedIn: true,
-        loginError: null,
-      });
-      if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
-        try { localStorage.setItem('resto_customer_auth', JSON.stringify(cust)); } catch {}
-      }
-      if (currentSession) {
-        dbAdapter.linkSessionToCustomer(currentSession.id, cust.id);
-        useSessionStore.getState().setCustomerInfo(cust.full_name, cust.phone);
-      }
-      setAuthSuccess(`Welcome back, ${cust.full_name}! Your profile and rewards have been recognized.`);
+    // Check if phone is an existing registered customer
+    const existingCheck = lookupAndRecognize(loginPhone);
+    if (existingCheck.isExisting && existingCheck.isTrusted && existingCheck.customer) {
+      setAuthSuccess(`Welcome back, ${existingCheck.customer.full_name}! Your profile and rewards have been recognized.`);
       refreshLoyaltyData();
       return;
     }
 
-    // Case B: New customer phone number -> prompt for name & OTP verification
+    if (existingCheck.isExisting && !existingCheck.isTrusted) {
+      const res = requestOtp(loginPhone);
+      if (res.success) {
+        setIsOtpStep(true);
+        setAuthSuccess('Existing customer. Security OTP sent to your mobile.');
+        if (res.otpCode) setLoginOtp(res.otpCode);
+      }
+      return;
+    }
+
+    // New customer phone number -> prompt for name & OTP verification
     const res = requestOtp(loginPhone);
     if (res.success) {
       setIsOtpStep(true);
@@ -289,7 +307,7 @@ export const CustomerProfilePage: React.FC = () => {
                   <input
                     type="tel"
                     value={loginPhone}
-                    onChange={(e) => setLoginPhone(e.target.value)}
+                    onChange={(e) => handlePhoneInputChange(e.target.value)}
                     placeholder="+91 98888 77665"
                     className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-brand-orange"
                     required
