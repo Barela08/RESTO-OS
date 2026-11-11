@@ -9,7 +9,7 @@ describe('Digital Loyalty Stamps & Milestone Rewards', () => {
     const initialStamps = loyalty.current_active_stamps;
 
     // Create session and order
-    const session = dbAdapter.getSessions()[0];
+    const session = dbAdapter.getSessions()[0] || dbAdapter.getOrCreateActiveSession(dbAdapter.getTables()[0].id);
     const items = dbAdapter.getMenuItems();
     const order = dbAdapter.placeOrder({
       tableSessionId: session.id,

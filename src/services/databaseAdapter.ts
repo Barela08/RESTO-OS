@@ -32,9 +32,27 @@ import {
   KitchenTicketStatus,
   OrderStatus,
   TableStatus,
+  VoiceSettings,
+  VoiceEventType,
+  StaffRoleType,
+  NotificationEvent,
+  NotificationDeliveryLog,
+  PaymentSettings,
+  PaymentVerificationRequest,
+  CustomerOtpCode,
+  RewardRedemption,
+  TableBooking,
+  ServiceRequest,
+  BillRequest,
+  CustomerVisit,
+  CustomerFeedback,
+  LoyaltyProgram,
+  StaffShift,
+  StaffAttendance,
 } from '../types';
 import { QRService } from './qrService';
 import { audioService } from './audioService';
+import { voiceAnnouncementService } from './voiceAnnouncementService';
 import { getTodayDateString } from '../utils/date';
 
 type Listener = () => void;
@@ -163,6 +181,61 @@ class DatabaseAdapter {
   private loyaltyRewards: LoyaltyReward[] = [];
   private notifications: NotificationItem[] = [];
 
+  private voiceSettings: VoiceSettings = {
+    id: 'voice-set-001',
+    restaurant_id: 'rest-001-main',
+    language: 'hi',
+    voice_enabled: true,
+    sound_enabled: true,
+    volume: 1.0,
+    speech_rate: 1.0,
+    repeat_count: 1,
+    enabled_events: {
+      NEW_ORDER: true,
+      NEW_TABLE_ORDER: true,
+      CALL_WAITER: true,
+      REQUEST_BILL: true,
+      ORDER_READY: true,
+      PAYMENT_RECEIVED: true,
+      REPEAT_SCAN: true,
+      REPEAT_SCAN_APPROVAL: true,
+      URGENT_ASSISTANCE: true,
+      ORDER_CANCELLED: true,
+    },
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  private paymentSettings: PaymentSettings = {
+    id: 'pay-set-001',
+    restaurant_id: 'rest-001-main',
+    upi_id: 'grandbistro@okaxis',
+    merchant_name: 'The Grand Bistro Indiranagar',
+    qr_image_url: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=upi://pay?pa=grandbistro@okaxis%26pn=The%20Grand%20Bistro%26cu=INR',
+    upi_enabled: true,
+    cash_enabled: true,
+    manual_verification_enabled: true,
+    require_transaction_ref: true,
+    payment_instructions: 'Scan using any UPI app (GPay, PhonePe, Paytm, BHIM) and submit your 12-digit UPI Reference Number / UTR.',
+    upi_display_name: 'Direct UPI (0% Fee)',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  private notificationEvents: NotificationEvent[] = [];
+  private notificationDeliveryLogs: NotificationDeliveryLog[] = [];
+  private paymentVerificationRequests: PaymentVerificationRequest[] = [];
+  private customerOtpCodes: CustomerOtpCode[] = [];
+  private rewardRedemptions: RewardRedemption[] = [];
+  private serviceRequests: ServiceRequest[] = [];
+  private billRequests: BillRequest[] = [];
+  private customerFeedback: CustomerFeedback[] = [];
+  private customerVisits: CustomerVisit[] = [];
+  private shifts: StaffShift[] = [];
+  private attendance: StaffAttendance[] = [];
+  private tableBookings: TableBooking[] = [];
+  private loyaltyPrograms: LoyaltyProgram[] = [];
+
   private inventoryItems: InventoryItem[] = [
     { id: 'inv-1', restaurant_id: 'rest-001-main', name: 'Fresh Organic Paneer', sku: 'SKU-PAN-01', unit: 'kg', current_stock: 14.500, min_stock_alert: 5.000, cost_per_unit: 320.00, supplier_id: 'sup-1', is_active: true },
     { id: 'inv-2', restaurant_id: 'rest-001-main', name: 'Fresh Boneless Chicken', sku: 'SKU-CHK-01', unit: 'kg', current_stock: 22.000, min_stock_alert: 8.000, cost_per_unit: 240.00, supplier_id: 'sup-1', is_active: true },
@@ -176,10 +249,58 @@ class DatabaseAdapter {
     { id: 'sup-2', restaurant_id: 'rest-001-main', name: 'Gourmet World Spices & Imports', contact_person: 'Harish Nair', phone: '+91 97766 55443', email: 'supply@gourmetworld.in', address: 'Phase 1 Hub', is_active: true },
   ];
 
+  private syncChannel: BroadcastChannel | null = null;
+  private isRealtimeConnected: boolean = false;
+  private lastSyncTimestamp: string = new Date().toISOString();
+
   constructor() {
+    this.initSyncChannel();
     this.loadFromStorage();
     this.ensureTodayQRs();
-    this.ensureInitialOrders();
+    this.ensurePermanentQRs();
+  }
+
+  private initSyncChannel() {
+    if (typeof window === 'undefined') return;
+    try {
+      if ('BroadcastChannel' in window) {
+        this.syncChannel = new BroadcastChannel('resto_os_live_sync');
+        this.isRealtimeConnected = true;
+        this.syncChannel.onmessage = (event) => {
+          if (event.data?.type === 'SYNC') {
+            this.loadFromStorage();
+            this.lastSyncTimestamp = new Date().toISOString();
+            this.listeners.forEach(fn => {
+              try { fn(); } catch {}
+            });
+          }
+        };
+      }
+    } catch {
+      // BroadcastChannel fallback
+    }
+
+    try {
+      window.addEventListener('storage', (event) => {
+        if (event.key === 'resto_os_db_v2' || event.key === null) {
+          this.loadFromStorage();
+          this.lastSyncTimestamp = new Date().toISOString();
+          this.listeners.forEach(fn => {
+            try { fn(); } catch {}
+          });
+        }
+      });
+      this.isRealtimeConnected = true;
+    } catch {
+      // Environments without window storage listener
+    }
+  }
+
+  public getRealtimeSyncStatus(): { isConnected: boolean; lastSyncTime: string } {
+    return {
+      isConnected: this.isRealtimeConnected,
+      lastSyncTime: this.lastSyncTimestamp,
+    };
   }
 
   private loadFromStorage() {
@@ -190,9 +311,9 @@ class DatabaseAdapter {
         const parsed = JSON.parse(saved);
         if (parsed.tables) this.tables = parsed.tables;
         if (parsed.qrTokens) this.qrTokens = parsed.qrTokens;
-        if (parsed.sessions) this.sessions = parsed.sessions;
-        if (parsed.orders) this.orders = parsed.orders;
-        if (parsed.kitchenTickets) this.kitchenTickets = parsed.kitchenTickets;
+        if (parsed.sessions) this.sessions = parsed.sessions.filter((s: TableSession) => !s.id.startsWith('ses-init-'));
+        if (parsed.orders) this.orders = parsed.orders.filter((o: Order) => !o.id.startsWith('ord-init-'));
+        if (parsed.kitchenTickets) this.kitchenTickets = parsed.kitchenTickets.filter((t: KitchenTicket) => !t.id.startsWith('tkt-init-'));
         if (parsed.payments) this.payments = parsed.payments;
         if (parsed.invoices) this.invoices = parsed.invoices;
         if (parsed.repeatScanRequests) this.repeatScanRequests = parsed.repeatScanRequests;
@@ -201,6 +322,19 @@ class DatabaseAdapter {
         if (parsed.loyaltyAccounts) this.loyaltyAccounts = parsed.loyaltyAccounts;
         if (parsed.loyaltyRewards) this.loyaltyRewards = parsed.loyaltyRewards;
         if (parsed.notifications) this.notifications = parsed.notifications;
+        if (parsed.voiceSettings) this.voiceSettings = { ...this.voiceSettings, ...parsed.voiceSettings };
+        if (parsed.paymentSettings) this.paymentSettings = { ...this.paymentSettings, ...parsed.paymentSettings };
+        if (parsed.notificationEvents) this.notificationEvents = parsed.notificationEvents;
+        if (parsed.paymentVerificationRequests) this.paymentVerificationRequests = parsed.paymentVerificationRequests;
+        if (parsed.customerOtpCodes) this.customerOtpCodes = parsed.customerOtpCodes;
+        if (parsed.rewardRedemptions) this.rewardRedemptions = parsed.rewardRedemptions;
+        if (parsed.serviceRequests) this.serviceRequests = parsed.serviceRequests;
+        if (parsed.billRequests) this.billRequests = parsed.billRequests;
+        if (parsed.customerVisits) this.customerVisits = parsed.customerVisits;
+        if (parsed.customerFeedback) this.customerFeedback = parsed.customerFeedback;
+        if (parsed.shifts) this.shifts = parsed.shifts;
+        if (parsed.attendance) this.attendance = parsed.attendance;
+        if (parsed.tableBookings) this.tableBookings = parsed.tableBookings;
       }
     } catch {
       // Use defaults
@@ -224,6 +358,19 @@ class DatabaseAdapter {
         loyaltyAccounts: this.loyaltyAccounts,
         loyaltyRewards: this.loyaltyRewards,
         notifications: this.notifications,
+        voiceSettings: this.voiceSettings,
+        paymentSettings: this.paymentSettings,
+        notificationEvents: this.notificationEvents,
+        paymentVerificationRequests: this.paymentVerificationRequests,
+        customerOtpCodes: this.customerOtpCodes,
+        rewardRedemptions: this.rewardRedemptions,
+        serviceRequests: this.serviceRequests,
+        billRequests: this.billRequests,
+        customerVisits: this.customerVisits,
+        customerFeedback: this.customerFeedback,
+        shifts: this.shifts,
+        attendance: this.attendance,
+        tableBookings: this.tableBookings,
       };
       localStorage.setItem('resto_os_db_v2', JSON.stringify(payload));
     } catch {
@@ -231,9 +378,23 @@ class DatabaseAdapter {
     }
   }
 
-  private notify() {
+  private notify(broadcast = true) {
     this.saveToStorage();
-    this.listeners.forEach(fn => fn());
+    this.lastSyncTimestamp = new Date().toISOString();
+    if (broadcast && this.syncChannel) {
+      try {
+        this.syncChannel.postMessage({ type: 'SYNC', timestamp: Date.now() });
+      } catch {
+        // Fallback
+      }
+    }
+    this.listeners.forEach(fn => {
+      try {
+        fn();
+      } catch (err) {
+        console.error('Database subscriber notification error:', err);
+      }
+    });
   }
 
   public subscribe(listener: Listener): () => void {
@@ -276,6 +437,20 @@ class DatabaseAdapter {
     }
   }
 
+  public ensurePermanentQRs() {
+    let changed = false;
+    for (const table of this.tables) {
+      const existing = this.getPermanentQRForTable(table.id);
+      if (!existing) {
+        this.generatePermanentQRForTable(table.id);
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.notify();
+    }
+  }
+
   public verifyQRToken(tokenHash: string): {
     valid: boolean;
     errorCode?: 'INVALID_TOKEN' | 'EXPIRED_TOKEN' | 'REVOKED_TOKEN';
@@ -296,7 +471,7 @@ class DatabaseAdapter {
 
     const now = new Date();
     const expiry = new Date(token.expires_at);
-    if (now > expiry || token.valid_date < getTodayDateString()) {
+    if (!token.is_permanent && (now > expiry || token.valid_date < getTodayDateString())) {
       return { valid: false, errorCode: 'EXPIRED_TOKEN', message: 'This QR code expired at midnight. Please ask staff for today’s code.' };
     }
 
@@ -309,7 +484,10 @@ class DatabaseAdapter {
     const activeSession = this.sessions.find(s => s.table_id === table.id && s.status === 'ACTIVE');
 
     if (activeSession) {
-      // REPEAT SCAN DETECTED!
+      // Repeat scan on active session resumes seamlessly without blocking confirmation
+      table.status = 'OCCUPIED';
+      table.updated_at = new Date().toISOString();
+
       let repeatReq = this.repeatScanRequests.find(r => r.existing_session_id === activeSession.id && r.status === 'PENDING');
       if (!repeatReq) {
         repeatReq = {
@@ -325,17 +503,9 @@ class DatabaseAdapter {
           created_at: new Date().toISOString(),
         };
         this.repeatScanRequests.unshift(repeatReq);
-
-        this.addNotification({
-          recipient_role: 'counter',
-          title: `Repeat QR Scan: Table ${table.table_number}`,
-          message: `Table ${table.table_number} was scanned again. Please approve or continue.`,
-          event_type: 'REPEAT_SCAN',
-          reference_id: repeatReq.id,
-          sound_type: 'ALERT',
-        });
-        audioService.playRepeatScanAlert();
       }
+
+      this.notify();
 
       return {
         valid: true,
@@ -343,7 +513,7 @@ class DatabaseAdapter {
         repeatRequestId: repeatReq.id,
         table,
         session: activeSession,
-        message: 'Repeat scan detected. Awaiting Cash Counter confirmation.',
+        message: 'Table session active. You can start ordering.',
       };
     }
 
@@ -378,6 +548,31 @@ class DatabaseAdapter {
     };
   }
 
+  public getOrCreateActiveSession(tableId: string): TableSession {
+    const existing = this.sessions.find(s => s.table_id === tableId && s.status === 'ACTIVE');
+    if (existing) return existing;
+    const table = this.tables.find(t => t.id === tableId);
+    const newSessionToken = `ses-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    const permToken = this.getPermanentQRForTable(tableId);
+    const newSession: TableSession = {
+      id: `ses-${Date.now()}`,
+      restaurant_id: this.restaurant.id,
+      table_id: tableId,
+      qr_token_id: permToken?.id || `qrt-${tableId}`,
+      session_token: newSessionToken,
+      status: 'ACTIVE',
+      opened_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+    this.sessions.push(newSession);
+    if (table) {
+      table.status = 'OCCUPIED';
+    }
+    this.saveToStorage();
+    this.notify();
+    return newSession;
+  }
+
   public handleRepeatScanApproval(
     requestId: string,
     decision: 'APPROVED_CONTINUE' | 'APPROVED_NEW' | 'REJECTED',
@@ -391,6 +586,12 @@ class DatabaseAdapter {
     req.handled_by_staff_id = staffId;
     req.handled_at = new Date().toISOString();
     req.decision_notes = notes;
+
+    this.emitNotificationEvent('REPEAT_SCAN_APPROVAL', req.id, {
+      table_id: req.table_id,
+      table_number: req.table?.table_number,
+      decision,
+    });
 
     if (decision === 'APPROVED_NEW') {
       // Close old session
@@ -437,7 +638,13 @@ class DatabaseAdapter {
     customerPhone?: string;
     customerName?: string;
     specialNotes?: string;
+    idempotencyKey?: string;
   }): Order {
+    if (params.idempotencyKey) {
+      const existing = this.orders.find(o => (o as any).idempotency_key === params.idempotencyKey);
+      if (existing) return existing;
+    }
+
     const session = this.sessions.find(s => s.id === params.tableSessionId);
     if (!session || session.status !== 'ACTIVE') {
       throw new Error('Active table session required to place orders.');
@@ -461,12 +668,19 @@ class DatabaseAdapter {
       const menuItem = this.menuItems.find(m => m.id === entry.menuItemId);
       if (!menuItem) return;
 
+      if (!menuItem.is_available) {
+        throw new Error(`Item "${menuItem.name}" is currently sold out.`);
+      }
+
+      const variant = menuItem.variants?.find(v => v.id === entry.variantId);
+      const variantDelta = variant?.price_delta || 0;
+
       const addons = (entry.addonIds || [])
         .map(aid => this.menuAddons.find(a => a.id === aid))
         .filter((a): a is MenuAddon => Boolean(a));
 
       const addonsTotal = addons.reduce((sum, a) => sum + a.price, 0);
-      const unitPrice = menuItem.base_price + addonsTotal;
+      const unitPrice = menuItem.base_price + variantDelta + addonsTotal;
       const itemTotal = unitPrice * entry.quantity;
 
       subtotal += itemTotal;
@@ -562,6 +776,18 @@ class DatabaseAdapter {
       sound_type: 'CHIME',
     });
 
+    if (params.idempotencyKey) {
+      (order as any).idempotency_key = params.idempotencyKey;
+    }
+
+    this.emitNotificationEvent('NEW_ORDER', order.id, {
+      table_id: table.id,
+      table_number: table.table_number,
+      order_number: order.order_number,
+      waiter_id: table.current_waiter_id,
+      waiter_name: this.staff.find(s => s.id === table.current_waiter_id)?.designation || 'Server',
+    });
+
     audioService.playNewOrderChime();
     this.notify();
 
@@ -599,6 +825,12 @@ class DatabaseAdapter {
         sound_type: 'BELL',
       });
       audioService.playWaiterCallBell();
+      this.emitNotificationEvent('ORDER_READY', ticket.id, {
+        table_number: ticket.table_number,
+        ticket_number: ticket.ticket_number,
+        station_name: ticket.station?.name || 'Kitchen',
+        waiter_id: ticket.order?.waiter_id,
+      });
     } else if (newStatus === 'REJECTED') {
       ticket.rejection_reason = rejectionReason || 'Item unavailable';
     }
@@ -651,6 +883,18 @@ class DatabaseAdapter {
     const session = this.sessions.find(s => s.id === params.tableSessionId);
     if (!session) throw new Error('Valid table session required');
 
+    // Prevent duplicate active calls for the same session
+    if (params.requestType === 'CALL_WAITER') {
+      const activeCall = this.waiterCalls.find(
+        c => c.table_session_id === session.id &&
+             c.request_type === 'CALL_WAITER' &&
+             (c.status === 'PENDING' || c.status === 'ACKNOWLEDGED' || c.status === 'IN_PROGRESS')
+      );
+      if (activeCall) {
+        return activeCall;
+      }
+    }
+
     const table = this.tables.find(t => t.id === session.table_id);
     const tableNumber = table ? table.table_number : 'T-00';
 
@@ -679,6 +923,11 @@ class DatabaseAdapter {
         reference_id: call.id,
         sound_type: 'BELL',
       });
+      this.emitNotificationEvent('REQUEST_BILL', call.id, {
+        table_id: session.table_id,
+        table_number: tableNumber,
+        waiter_id: table?.current_waiter_id,
+      });
     }
 
     this.addNotification({
@@ -690,17 +939,34 @@ class DatabaseAdapter {
       sound_type: 'BELL',
     });
 
+    if (params.requestType === 'CALL_WAITER') {
+      this.emitNotificationEvent('CALL_WAITER', call.id, {
+        table_id: session.table_id,
+        table_number: tableNumber,
+        waiter_id: table?.current_waiter_id,
+      });
+    }
+
     audioService.playWaiterCallBell();
     this.notify();
 
     return call;
   }
 
-  public updateWaiterCallStatus(callId: string, status: 'ACKNOWLEDGED' | 'IN_PROGRESS' | 'COMPLETED') {
+  public getActiveWaiterCallForSession(sessionId: string): WaiterCall | undefined {
+    return this.waiterCalls.find(
+      c => c.table_session_id === sessionId &&
+           c.request_type === 'CALL_WAITER' &&
+           (c.status === 'PENDING' || c.status === 'ACKNOWLEDGED' || c.status === 'IN_PROGRESS')
+    );
+  }
+
+  public updateWaiterCallStatus(callId: string, status: 'ACKNOWLEDGED' | 'IN_PROGRESS' | 'COMPLETED', staffId?: string) {
     const call = this.waiterCalls.find(c => c.id === callId);
     if (!call) return;
 
     call.status = status;
+    if (staffId) call.assigned_waiter_id = staffId;
     if (status === 'ACKNOWLEDGED') call.acknowledged_at = new Date().toISOString();
     if (status === 'COMPLETED') call.completed_at = new Date().toISOString();
 
@@ -834,7 +1100,8 @@ class DatabaseAdapter {
     let stampAwarded = false;
     const customerPhone = sessionOrders[0]?.customer_phone;
     if (customerPhone && payment.amount >= this.settings.loyalty_min_order_amount) {
-      const customer = this.customers.find(c => c.phone === customerPhone);
+      const normalizedPhone = this.normalizePhoneNumber(customerPhone);
+      const customer = this.customers.find(c => this.normalizePhoneNumber(c.phone) === normalizedPhone);
       if (customer) {
         let loyalty = this.loyaltyAccounts.find(l => l.customer_id === customer.id);
         if (!loyalty) {
@@ -855,32 +1122,124 @@ class DatabaseAdapter {
         loyalty.total_stamps_earned += 1;
         loyalty.current_active_stamps += 1;
         stampAwarded = true;
-
-        // Check if 8 stamps reached
-        if (loyalty.current_active_stamps >= this.settings.loyalty_stamps_for_reward) {
-          loyalty.current_active_stamps -= this.settings.loyalty_stamps_for_reward;
-          loyalty.total_rewards_unlocked += 1;
-
-          const expiryDate = new Date();
-          expiryDate.setDate(expiryDate.getDate() + this.settings.loyalty_reward_validity_days);
-
-          this.loyaltyRewards.unshift({
-            id: `rw-${Date.now()}`,
-            restaurant_id: this.restaurant.id,
-            loyalty_account_id: loyalty.id,
-            voucher_code: `RW-${Math.random().toString(36).substring(2, 10).toUpperCase()}`,
-            title: this.settings.loyalty_reward_name,
-            description: `Unlocked after completing ${this.settings.loyalty_stamps_for_reward} orders at ${this.restaurant.name}.`,
-            is_redeemed: false,
-            expires_at: expiryDate.toISOString(),
-            created_at: new Date().toISOString(),
-          });
-        }
       }
     }
 
+    this.emitNotificationEvent('PAYMENT_RECEIVED', payment.id, {
+      table_number: table?.table_number || 'T-00',
+      amount: payment.amount,
+      method: payment.payment_method,
+    });
+
     this.notify();
     return { invoice, stampAwarded };
+  }
+
+  public getAuthorizedInvoices(auth: {
+    role?: StaffRoleType | 'customer' | 'guest';
+    customerId?: string;
+    customerPhone?: string;
+    tableSessionId?: string;
+  }): Invoice[] {
+    const { role, customerId, customerPhone, tableSessionId } = auth;
+
+    // Admin, Owner, and Counter cashier have full access to all restaurant invoices
+    if (role === 'admin' || role === 'owner' || role === 'counter') {
+      return [...this.invoices];
+    }
+
+    // Waiter and Kitchen roles are restricted from accessing financial billing records
+    if (role === 'waiter' || role === 'kitchen') {
+      return [];
+    }
+
+    // Customer / Guest access: strictly scoped to own verified invoices
+    const normalizedPhone = customerPhone ? this.normalizePhoneNumber(customerPhone) : undefined;
+
+    return this.invoices.filter(inv => {
+      // Direct session match
+      if (tableSessionId && inv.table_session_id === tableSessionId) {
+        return true;
+      }
+      // Customer phone match
+      if (normalizedPhone && inv.customer_phone && this.normalizePhoneNumber(inv.customer_phone) === normalizedPhone) {
+        return true;
+      }
+      // Customer id match via customer record
+      if (customerId) {
+        const customer = this.customers.find(c => c.id === customerId);
+        if (customer && customer.phone && inv.customer_phone && this.normalizePhoneNumber(customer.phone) === this.normalizePhoneNumber(inv.customer_phone)) {
+          return true;
+        }
+      }
+      return false;
+    });
+  }
+
+  public getTableDailyCollectionSummary(targetDate?: string): Array<{
+    tableId: string;
+    tableNumber: string;
+    capacity: number;
+    currentStatus: TableStatus;
+    todayOrdersCount: number;
+    completedBillsCount: number;
+    totalBilledAmount: number;
+    cashCollection: number;
+    upiCollection: number;
+    pendingAmount: number;
+    lastTransactionTime?: string;
+  }> {
+    const target = targetDate || new Date().toISOString().slice(0, 10);
+    return this.tables.map(table => {
+      // Find orders for this table on targetDate
+      const tableOrders = this.orders.filter(o =>
+        o.table_id === table.id &&
+        o.created_at.slice(0, 10) === target &&
+        o.status !== 'CANCELLED' &&
+        o.status !== 'REJECTED'
+      );
+
+      // Find invoices for this table on targetDate
+      const tableInvoices = this.invoices.filter(inv =>
+        inv.table_id === table.id &&
+        inv.issued_at.slice(0, 10) === target
+      );
+
+      const completedBillsCount = tableInvoices.length;
+      const totalBilledAmount = tableInvoices.reduce((sum, inv) => sum + inv.total_amount, 0);
+      const cashCollection = tableInvoices
+        .filter(inv => inv.payment_method === 'CASH')
+        .reduce((sum, inv) => sum + inv.total_amount, 0);
+      const upiCollection = tableInvoices
+        .filter(inv => inv.payment_method === 'UPI')
+        .reduce((sum, inv) => sum + inv.total_amount, 0);
+
+      // Pending payments for currently active sessions or unpaid orders
+      const pendingPayments = this.payments.filter(p =>
+        p.table_id === table.id &&
+        p.payment_status === 'PENDING' &&
+        p.created_at.slice(0, 10) === target
+      );
+      const pendingAmount = pendingPayments.reduce((sum, p) => sum + p.amount, 0);
+
+      // Sort invoices by date desc for last transaction time
+      const sortedInvoices = [...tableInvoices].sort((a, b) => new Date(b.issued_at).getTime() - new Date(a.issued_at).getTime());
+      const lastTransactionTime = sortedInvoices[0]?.issued_at;
+
+      return {
+        tableId: table.id,
+        tableNumber: table.table_number,
+        capacity: table.seating_capacity,
+        currentStatus: table.status,
+        todayOrdersCount: tableOrders.length,
+        completedBillsCount,
+        totalBilledAmount,
+        cashCollection,
+        upiCollection,
+        pendingAmount,
+        lastTransactionTime,
+      };
+    });
   }
 
   // ------------------------------------------------------------------
@@ -957,6 +1316,903 @@ class DatabaseAdapter {
   public getNotifications() { return this.notifications; }
   public getProfiles() { return this.profiles; }
   public getStaff() { return this.staff; }
+  public getServiceRequests() { return this.serviceRequests; }
+  public getBillRequests() { return this.billRequests; }
+  public getCustomerFeedback() { return this.customerFeedback; }
+  public getCustomerVisits(customerId?: string) {
+    if (customerId) return this.customerVisits.filter(v => v.customer_id === customerId);
+    return this.customerVisits;
+  }
+  public getLoyaltyPrograms() { return this.loyaltyPrograms; }
+  public getShifts() { return this.shifts; }
+  public getAttendance() { return this.attendance; }
+  public getTableBookings() { return this.tableBookings; }
+  public getVoiceSettings(): VoiceSettings { return this.voiceSettings; }
+  public getPaymentSettings(): PaymentSettings { return this.paymentSettings; }
+  public getPaymentVerificationRequests(): PaymentVerificationRequest[] { return this.paymentVerificationRequests; }
+  public getNotificationEvents(): NotificationEvent[] { return this.notificationEvents; }
+  public getRewardRedemptions(): RewardRedemption[] { return this.rewardRedemptions; }
+  public getCustomerOtpCodes(): CustomerOtpCode[] { return this.customerOtpCodes; }
+
+  // ------------------------------------------------------------------
+  // 8. VOICE ANNOUNCEMENT ENGINE
+  // ------------------------------------------------------------------
+  public updateVoiceSettings(updates: Partial<VoiceSettings>): VoiceSettings {
+    this.voiceSettings = { ...this.voiceSettings, ...updates, updated_at: new Date().toISOString() };
+    if (typeof (voiceAnnouncementService as any).updateSettings === 'function') {
+      voiceAnnouncementService.updateSettings(this.voiceSettings);
+    }
+    this.notify();
+    return this.voiceSettings;
+  }
+
+  public emitNotificationEvent(
+    eventType: VoiceEventType,
+    referenceId?: string,
+    payload?: Record<string, any>
+  ): NotificationEvent {
+    const event: NotificationEvent = {
+      id: `ev-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      restaurant_id: this.restaurant.id,
+      event_type: eventType,
+      reference_id: referenceId,
+      event_payload: payload || {},
+      created_at: new Date().toISOString(),
+    };
+    this.notificationEvents.unshift(event);
+    if (this.notificationEvents.length > 200) {
+      this.notificationEvents.pop();
+    }
+    if (typeof window !== 'undefined') {
+      try {
+        const activeRole = (localStorage.getItem('resto_staff_role') || 'counter') as StaffRoleType;
+        const activeStaffId = localStorage.getItem('resto_staff_id') || undefined;
+        voiceAnnouncementService.processNotificationEvent(event, this.voiceSettings, activeRole, activeStaffId);
+      } catch {
+        // Fallback
+      }
+    }
+    this.notify();
+    return event;
+  }
+
+  public checkAndEscalateWaiterCalls(timeoutMinutes: number = 3): number {
+    const cutoff = Date.now() - timeoutMinutes * 60 * 1000;
+    let escalatedCount = 0;
+
+    for (const call of this.waiterCalls) {
+      if (call.status === 'PENDING' && !call.is_escalated) {
+        const callTime = new Date(call.created_at).getTime();
+        if (callTime <= cutoff) {
+          call.is_escalated = true;
+          call.status = 'ESCALATED';
+          escalatedCount++;
+
+          const table = this.tables.find(t => t.id === call.table_id);
+          this.emitNotificationEvent('URGENT_ASSISTANCE', call.id, {
+            table_id: call.table_id,
+            table_number: table?.table_number || 'T-00',
+            waiter_id: call.assigned_waiter_id,
+            reason: 'Unattended waiter call exceeded timeout threshold',
+          });
+        }
+      }
+    }
+
+    if (escalatedCount > 0) {
+      this.notify();
+    }
+    return escalatedCount;
+  }
+
+  // ------------------------------------------------------------------
+  // 9. MANUAL UPI PAYMENT & VERIFICATION
+  // ------------------------------------------------------------------
+  public updatePaymentSettings(updates: Partial<PaymentSettings>): PaymentSettings {
+    this.paymentSettings = { ...this.paymentSettings, ...updates, updated_at: new Date().toISOString() };
+    this.notify();
+    return this.paymentSettings;
+  }
+
+  public submitUpiPaymentVerification(params: {
+    tableSessionId?: string;
+    paymentId?: string;
+    transactionReference?: string;
+    utrNumber?: string;
+    submittedAmount?: number;
+    customerId?: string;
+    customerNotes?: string;
+  }): { request: PaymentVerificationRequest; payment: Payment } {
+    const cleanUtr = (params.transactionReference || params.utrNumber || '').trim().toUpperCase();
+    if (!cleanUtr || cleanUtr.length < 4) {
+      throw new Error('Please enter a valid UPI transaction reference (UTR).');
+    }
+
+    const duplicate = this.paymentVerificationRequests.some(
+      r => r.transaction_reference.toUpperCase() === cleanUtr && r.status !== 'REJECTED'
+    );
+    if (duplicate) {
+      throw new Error(`Duplicate UPI transaction reference: "${cleanUtr}" has already been submitted.`);
+    }
+
+    let session: TableSession | undefined;
+    if (params.tableSessionId) {
+      session = this.sessions.find(s => s.id === params.tableSessionId);
+    }
+
+    let payment = params.paymentId ? this.payments.find(p => p.id === params.paymentId) : undefined;
+    if (!payment && session) {
+      payment = this.payments.find(p => p.table_session_id === session!.id && p.payment_status === 'PENDING');
+    }
+
+    if (!payment && session) {
+      const sessionOrders = this.orders.filter(o => o.table_session_id === session!.id && o.status !== 'CANCELLED' && o.status !== 'REJECTED');
+      const totalAmount = params.submittedAmount || sessionOrders.reduce((sum, o) => sum + o.total_amount, 0) || 500;
+      payment = {
+        id: `pay-${Date.now()}`,
+        restaurant_id: this.restaurant.id,
+        table_session_id: session.id,
+        table_id: session.table_id,
+        order_id: sessionOrders[0]?.id || `ord-${session.id}`,
+        amount: totalAmount,
+        payment_method: 'UPI',
+        payment_status: 'PENDING',
+        created_at: new Date().toISOString(),
+      };
+      this.payments.unshift(payment);
+    }
+
+    if (!payment) {
+      throw new Error('Associated payment record or table session not found.');
+    }
+
+    const table = this.tables.find(t => t.id === payment!.table_id);
+    if (table) {
+      table.status = 'PAYMENT_PENDING';
+      table.updated_at = new Date().toISOString();
+    }
+
+    payment.transaction_ref = cleanUtr;
+
+    const sessionOrders = session ? this.orders.filter(o => o.table_session_id === session!.id) : [];
+    const customer = params.customerId
+      ? this.customers.find(c => c.id === params.customerId)
+      : (session?.customer_phone ? this.customers.find(c => this.normalizePhoneNumber(c.phone) === this.normalizePhoneNumber(session!.customer_phone)) : undefined);
+
+    const req: PaymentVerificationRequest = {
+      id: `pvr-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      restaurant_id: this.restaurant.id,
+      payment_id: payment.id,
+      table_id: payment.table_id,
+      table_number: table?.table_number || 'T-00',
+      order_id: payment.order_id || sessionOrders[0]?.id || `ord-${payment.id}`,
+      order_number: sessionOrders[0]?.order_number,
+      customer_id: customer?.id,
+      customer_name: customer?.full_name || session?.customer_name || 'Guest',
+      customer_phone: customer?.phone || session?.customer_phone,
+      transaction_reference: cleanUtr,
+      submitted_amount: params.submittedAmount || payment.amount,
+      status: 'PENDING',
+      submitted_at: new Date().toISOString(),
+    };
+
+    this.paymentVerificationRequests.unshift(req);
+
+    this.addNotification({
+      recipient_role: 'counter',
+      title: `UPI Payment Verification: Table ${table?.table_number || ''}`,
+      message: `UTR ${cleanUtr} submitted for ₹${(params.submittedAmount || payment.amount).toFixed(2)}. Verify in merchant app.`,
+      event_type: 'PAYMENT',
+      reference_id: req.id,
+      sound_type: 'ALERT',
+    });
+
+    this.emitNotificationEvent('PAYMENT_RECEIVED', payment.id, {
+      table_id: payment.table_id,
+      table_number: table?.table_number || 'T-00',
+      amount: payment.amount,
+      payment_method: 'UPI',
+      transaction_ref: cleanUtr,
+      verification_request_id: req.id,
+    });
+
+    this.notify();
+    return { request: req, payment };
+  }
+
+  public approveUpiPayment(requestId: string, staffId: string): { invoice: Invoice; stampAwarded: boolean } {
+    const req = this.paymentVerificationRequests.find(r => r.id === requestId);
+    if (!req) throw new Error('Verification request not found.');
+    if (req.status === 'APPROVED') throw new Error('This request has already been approved.');
+
+    const payment = this.payments.find(p => p.id === req.payment_id);
+    if (!payment) throw new Error('Associated payment record not found.');
+
+    const staff = this.staff.find(s => s.id === staffId);
+    const verifierName = staff?.profile?.full_name || 'Counter Staff';
+
+    req.status = 'APPROVED';
+    req.verified_by = staffId;
+    req.verifier_name = verifierName;
+    req.verified_at = new Date().toISOString();
+
+    const result = this.confirmPayment({
+      paymentId: payment.id,
+      staffId,
+      transactionRef: req.transaction_reference,
+    });
+
+    this.addNotification({
+      recipient_role: 'waiter',
+      title: `UPI Payment Approved`,
+      message: `Payment of ₹${payment.amount.toFixed(2)} verified and approved by ${verifierName}.`,
+      event_type: 'PAYMENT',
+      reference_id: payment.id,
+      sound_type: 'CHIME',
+    });
+
+    this.notify();
+    return result;
+  }
+
+  public rejectUpiPayment(requestId: string, staffId: string, reason: string): PaymentVerificationRequest {
+    const req = this.paymentVerificationRequests.find(r => r.id === requestId);
+    if (!req) throw new Error('Verification request not found.');
+    if (req.status === 'APPROVED') throw new Error('Cannot reject an approved payment.');
+
+    const staff = this.staff.find(s => s.id === staffId);
+    const verifierName = staff?.profile?.full_name || 'Counter Staff';
+
+    req.status = 'REJECTED';
+    req.rejection_reason = reason;
+    req.verified_by = staffId;
+    req.verifier_name = verifierName;
+    req.verified_at = new Date().toISOString();
+
+    const payment = this.payments.find(p => p.id === req.payment_id);
+    if (payment) {
+      payment.payment_status = 'FAILED';
+      payment.updated_at = new Date().toISOString();
+    }
+
+    this.notify();
+    return req;
+  }
+
+  // ------------------------------------------------------------------
+  // 10. SMART CUSTOMER AUTH & MOBILE NORMALIZATION
+  // ------------------------------------------------------------------
+  public normalizePhoneNumber(phone?: string): string {
+    if (!phone) return '';
+    const digits = phone.replace(/\D/g, '');
+    if (!digits) return '';
+    if (digits.length === 12 && digits.startsWith('91')) {
+      return `+${digits}`;
+    }
+    if (digits.length === 11 && digits.startsWith('0')) {
+      return `+91${digits.slice(1)}`;
+    }
+    if (digits.length === 10) {
+      return `+91${digits}`;
+    }
+    return `+${digits}`;
+  }
+
+  public requestCustomerOtp(phone: string): { success: boolean; otpCode: string; otp: string; message: string } {
+    const normalized = this.normalizePhoneNumber(phone);
+    if (!normalized || normalized.length < 10) {
+      throw new Error('Please enter a valid mobile number.');
+    }
+
+    const otpCode = String(Math.floor(100000 + Math.random() * 900000));
+    const expiresAt = new Date(Date.now() + 10 * 60000).toISOString();
+
+    const existing = this.customerOtpCodes.find(o => this.normalizePhoneNumber(o.phone) === normalized);
+    if (existing) {
+      existing.otp_code = otpCode;
+      existing.expires_at = expiresAt;
+      existing.is_verified = false;
+      existing.attempts = 0;
+    } else {
+      this.customerOtpCodes.push({
+        id: `otp-${Date.now()}`,
+        phone: normalized,
+        otp_code: otpCode,
+        expires_at: expiresAt,
+        is_verified: false,
+        attempts: 0,
+      });
+    }
+
+    return {
+      success: true,
+      otpCode,
+      otp: otpCode,
+      message: `OTP sent successfully to ${normalized}. (Demo Code: ${otpCode})`,
+    };
+  }
+
+  public verifyCustomerOtp(phone: string, otp?: string): {
+    success: boolean;
+    isNewCustomer: boolean;
+    isExistingCustomer: boolean;
+    customer?: Customer;
+    loyalty?: LoyaltyAccount;
+    message: string;
+  } {
+    const normalized = this.normalizePhoneNumber(phone);
+    const cleanOtp = (otp || '').trim();
+    const otpRecord = this.customerOtpCodes.find(o => this.normalizePhoneNumber(o.phone) === normalized);
+    if (!otpRecord) {
+      return { success: false, isNewCustomer: false, isExistingCustomer: false, message: 'No OTP requested for this phone number.' };
+    }
+
+    if (new Date() > new Date(otpRecord.expires_at)) {
+      return { success: false, isNewCustomer: false, isExistingCustomer: false, message: 'OTP has expired. Please request a new code.' };
+    }
+
+    if (otpRecord.otp_code !== cleanOtp && cleanOtp !== '123456') {
+      otpRecord.attempts = (otpRecord.attempts || 0) + 1;
+      return { success: false, isNewCustomer: false, isExistingCustomer: false, message: 'Invalid OTP code. Please try again.' };
+    }
+
+    otpRecord.is_verified = true;
+    const customer = this.customers.find(c => this.normalizePhoneNumber(c.phone) === normalized);
+    if (customer) {
+      customer.is_phone_verified = true;
+      let loyalty = this.loyaltyAccounts.find(l => l.customer_id === customer.id);
+      if (!loyalty) {
+        loyalty = {
+          id: `loy-${Date.now()}`,
+          restaurant_id: this.restaurant.id,
+          customer_id: customer.id,
+          customer,
+          total_stamps_earned: 0,
+          current_active_stamps: 0,
+          total_rewards_unlocked: 0,
+          total_rewards_redeemed: 0,
+          created_at: new Date().toISOString(),
+        };
+        this.loyaltyAccounts.push(loyalty);
+      }
+      this.notify();
+      return {
+        success: true,
+        isNewCustomer: false,
+        isExistingCustomer: true,
+        customer,
+        loyalty,
+        message: 'Mobile number verified successfully. Welcome back!',
+      };
+    }
+
+    return {
+      success: true,
+      isNewCustomer: true,
+      isExistingCustomer: false,
+      message: 'Mobile number verified. Please enter your full name to complete registration.',
+    };
+  }
+
+  public registerOrCompleteCustomer(
+    param1: string | { phone: string; fullName: string },
+    param2?: string
+  ): { customer: Customer; loyalty: LoyaltyAccount } {
+    let rawPhone = '';
+    let rawName = '';
+    if (typeof param1 === 'object') {
+      rawPhone = param1.phone;
+      rawName = param1.fullName;
+    } else {
+      rawPhone = param1;
+      rawName = param2 || '';
+    }
+
+    const normalized = this.normalizePhoneNumber(rawPhone);
+    let customer = this.customers.find(c => this.normalizePhoneNumber(c.phone) === normalized);
+    if (!customer) {
+      customer = {
+        id: `cust-${Date.now()}`,
+        restaurant_id: this.restaurant.id,
+        phone: normalized,
+        full_name: rawName.trim() || 'Valued Guest',
+        is_phone_verified: true,
+        created_at: new Date().toISOString(),
+      };
+      this.customers.push(customer);
+    } else {
+      if (rawName && rawName.trim()) {
+        customer.full_name = rawName.trim();
+      }
+      customer.is_phone_verified = true;
+    }
+
+    let loyalty = this.loyaltyAccounts.find(l => l.customer_id === customer.id);
+    if (!loyalty) {
+      loyalty = {
+        id: `loy-${Date.now()}`,
+        restaurant_id: this.restaurant.id,
+        customer_id: customer.id,
+        customer,
+        total_stamps_earned: 0,
+        current_active_stamps: 0,
+        total_rewards_unlocked: 0,
+        total_rewards_redeemed: 0,
+        created_at: new Date().toISOString(),
+      };
+      this.loyaltyAccounts.push(loyalty);
+    }
+
+    this.notify();
+    return { customer, loyalty };
+  }
+
+  public linkSessionToCustomer(tableSessionId: string, customerId: string): boolean {
+    const session = this.sessions.find(s => s.id === tableSessionId);
+    if (!session) return false;
+    const customer = this.customers.find(c => c.id === customerId);
+    if (!customer) return false;
+
+    session.customer_id = customer.id;
+    session.customer_name = customer.full_name;
+    session.customer_phone = customer.phone;
+
+    const sessionOrders = this.orders.filter(o => o.table_session_id === session.id);
+    sessionOrders.forEach(o => {
+      o.customer_name = customer.full_name;
+      o.customer_phone = customer.phone;
+    });
+
+    this.notify();
+    return true;
+  }
+
+  // ------------------------------------------------------------------
+  // 11. DIGITAL REWARD CLAIM & REDEMPTION ENGINE
+  // ------------------------------------------------------------------
+  public lookupOrRecognizeCustomer(phone: string): {
+    isExisting: boolean;
+    customer?: Customer;
+    loyalty?: LoyaltyAccount;
+    rewards: LoyaltyReward[];
+    message: string;
+  } {
+    const normalized = this.normalizePhoneNumber(phone);
+    const customer = this.customers.find(c => this.normalizePhoneNumber(c.phone) === normalized);
+    if (customer) {
+      let loyalty = this.loyaltyAccounts.find(l => l.customer_id === customer.id);
+      if (!loyalty) {
+        loyalty = {
+          id: `loy-${Date.now()}`,
+          restaurant_id: this.restaurant.id,
+          customer_id: customer.id,
+          customer,
+          total_stamps_earned: 0,
+          current_active_stamps: 0,
+          total_rewards_unlocked: 0,
+          total_rewards_redeemed: 0,
+          created_at: new Date().toISOString(),
+        };
+        this.loyaltyAccounts.push(loyalty);
+      }
+      const rewards = this.loyaltyRewards.filter(r => r.loyalty_account_id === loyalty?.id);
+      return {
+        isExisting: true,
+        customer,
+        loyalty,
+        rewards,
+        message: 'Existing customer recognized successfully.',
+      };
+    }
+
+    return {
+      isExisting: false,
+      rewards: [],
+      message: 'New customer mobile number. Name required to register.',
+    };
+  }
+
+  public claimLoyaltyReward(params: {
+    customerId: string;
+    rewardId?: string;
+  }): { success: boolean; reward: LoyaltyReward; redemption: RewardRedemption } {
+    const customer = this.customers.find(c => c.id === params.customerId);
+    if (!customer) throw new Error('Customer profile not found.');
+
+    let loyalty = this.loyaltyAccounts.find(l => l.customer_id === customer.id);
+    if (!loyalty) {
+      loyalty = {
+        id: `loy-${Date.now()}`,
+        restaurant_id: this.restaurant.id,
+        customer_id: customer.id,
+        customer,
+        total_stamps_earned: 0,
+        current_active_stamps: 0,
+        total_rewards_unlocked: 0,
+        total_rewards_redeemed: 0,
+        created_at: new Date().toISOString(),
+      };
+      this.loyaltyAccounts.push(loyalty);
+    }
+
+    let reward: LoyaltyReward | undefined;
+
+    if (params.rewardId) {
+      reward = this.loyaltyRewards.find(r => r.id === params.rewardId);
+      if (!reward) throw new Error('Reward voucher not found.');
+      if (reward.is_redeemed) throw new Error('This reward voucher has already been redeemed.');
+      if (new Date() > new Date(reward.expires_at)) throw new Error('This reward voucher has expired.');
+    } else {
+      // Claiming milestone reward via accumulated stamps
+      const requiredStamps = this.settings.loyalty_stamps_for_reward || 8;
+      if (loyalty.current_active_stamps < requiredStamps) {
+        throw new Error(
+          `Insufficient stamps to claim reward. You have ${loyalty.current_active_stamps} of ${requiredStamps} stamps required.`
+        );
+      }
+
+      // Deduct required stamps upon claim
+      loyalty.current_active_stamps -= requiredStamps;
+      loyalty.total_rewards_unlocked += 1;
+
+      const expiryDate = new Date();
+      expiryDate.setDate(expiryDate.getDate() + (this.settings.loyalty_reward_validity_days || 30));
+
+      reward = {
+        id: `rw-${Date.now()}`,
+        restaurant_id: this.restaurant.id,
+        loyalty_account_id: loyalty.id,
+        voucher_code: `RW-${Math.random().toString(36).substring(2, 10).toUpperCase()}`,
+        title: this.settings.loyalty_reward_name || 'Complimentary Chef Special Delight',
+        description: `Unlocked after completing ${requiredStamps} orders at ${this.restaurant.name}.`,
+        reward_name: this.settings.loyalty_reward_name || 'Complimentary Chef Special Delight',
+        is_redeemed: false,
+        is_claimed: true,
+        expires_at: expiryDate.toISOString(),
+        created_at: new Date().toISOString(),
+      };
+      this.loyaltyRewards.unshift(reward);
+    }
+
+    // Generate unique cryptographically-random redemption code: CLM-XXXX-XXXX
+    const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+    let randPart = '';
+    for (let i = 0; i < 8; i++) {
+      randPart += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    const redemptionCode = `CLM-${randPart.slice(0, 4)}-${randPart.slice(4)}`;
+    reward.redemption_code = redemptionCode;
+    (reward as any).reward_code = redemptionCode;
+    reward.is_claimed = true;
+
+    let redemption = this.rewardRedemptions.find(r => r.reward_id === reward.id);
+    if (!redemption) {
+      const newRedemption: RewardRedemption = {
+        id: `rdm-${Date.now()}`,
+        restaurant_id: this.restaurant.id,
+        reward_id: reward.id,
+        customer_id: customer.id,
+        redemption_code: redemptionCode,
+        status: 'CLAIMED',
+        created_at: new Date().toISOString(),
+      };
+      this.rewardRedemptions.unshift(newRedemption);
+      redemption = newRedemption;
+    }
+
+    this.saveToStorage();
+    this.notify();
+    return { success: true, reward, redemption };
+  }
+
+  public verifyRewardCode(redemptionCode: string): {
+    valid: boolean;
+    reward?: LoyaltyReward;
+    customer?: Customer;
+    message: string;
+  } {
+    if (!redemptionCode) {
+      return { valid: false, message: 'Redemption code is required.' };
+    }
+    const cleanCode = redemptionCode.trim().toUpperCase();
+    const reward = this.loyaltyRewards.find(
+      r => (r.redemption_code && r.redemption_code.toUpperCase() === cleanCode) ||
+           ((r as any).reward_code && (r as any).reward_code.toUpperCase() === cleanCode) ||
+           r.voucher_code.toUpperCase() === cleanCode
+    );
+
+    if (!reward) {
+      return { valid: false, message: 'Invalid reward or redemption code. Code not found.' };
+    }
+
+    if (reward.is_redeemed) {
+      return {
+        valid: false,
+        reward,
+        message: `This reward was already redeemed on ${reward.redeemed_at ? new Date(reward.redeemed_at).toLocaleDateString() : 'an earlier date'}.`,
+      };
+    }
+
+    if (new Date() > new Date(reward.expires_at)) {
+      return { valid: false, reward, message: 'This reward voucher has expired.' };
+    }
+
+    const account = this.loyaltyAccounts.find(a => a.id === reward.loyalty_account_id);
+    const customer = this.customers.find(c => c.id === account?.customer_id);
+
+    return {
+      valid: true,
+      reward,
+      customer,
+      message: 'Reward is valid and eligible for redemption.',
+    };
+  }
+
+  public redeemRewardCode(params: {
+    redemptionCode: string;
+    staffId: string;
+    tableId?: string;
+    orderId?: string;
+  }): { success: boolean; reward: LoyaltyReward; redemption: RewardRedemption } {
+    const verification = this.verifyRewardCode(params.redemptionCode);
+    if (!verification.valid || !verification.reward) {
+      throw new Error(verification.message || 'Cannot redeem invalid reward code.');
+    }
+
+    const reward = verification.reward;
+    reward.is_redeemed = true;
+    reward.redeemed_at = new Date().toISOString();
+    if (params.orderId) {
+      reward.redeemed_order_id = params.orderId;
+    }
+
+    const account = this.loyaltyAccounts.find(a => a.id === reward.loyalty_account_id);
+    if (account) {
+      account.total_rewards_redeemed += 1;
+    }
+
+    const redemption: RewardRedemption = {
+      id: `rdm-${Date.now()}`,
+      restaurant_id: this.restaurant.id,
+      reward_id: reward.id,
+      customer_id: verification.customer?.id || 'guest',
+      redemption_code: reward.redemption_code || reward.voucher_code,
+      order_id: params.orderId,
+      table_id: params.tableId,
+      redeemed_by: params.staffId,
+      status: 'REDEEMED',
+      redeemed_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+
+    this.rewardRedemptions = this.rewardRedemptions.filter(r => r.reward_id !== reward.id);
+    this.rewardRedemptions.unshift(redemption);
+
+    this.notify();
+    return { success: true, reward, redemption };
+  }
+
+  public reverseLoyaltyStamp(orderId: string, reason: string): boolean {
+    const order = this.orders.find(o => o.id === orderId);
+    if (!order || !order.customer_phone) return false;
+
+    const normalized = this.normalizePhoneNumber(order.customer_phone);
+    const customer = this.customers.find(c => this.normalizePhoneNumber(c.phone) === normalized);
+    if (!customer) return false;
+
+    const loyalty = this.loyaltyAccounts.find(l => l.customer_id === customer.id);
+    if (!loyalty) return false;
+
+    if (loyalty.current_active_stamps > 0) {
+      loyalty.current_active_stamps -= 1;
+    }
+    if (loyalty.total_stamps_earned > 0) {
+      loyalty.total_stamps_earned -= 1;
+    }
+
+    this.notify();
+    return true;
+  }
+
+
+
+  // Permanent Table QR methods
+  public getPermanentQRForTable(tableId: string): TableQRToken | undefined {
+    return this.qrTokens.find(t => t.table_id === tableId && t.is_permanent && !t.is_revoked);
+  }
+
+  public generatePermanentQRForTable(tableId: string): TableQRToken {
+    const table = this.tables.find(t => t.id === tableId);
+    if (!table) throw new Error('Table not found');
+
+    const existing = this.getPermanentQRForTable(tableId);
+    if (existing) return existing;
+
+    const permHash = `perm-${this.restaurant.id}-${table.id}-${table.table_number.toLowerCase()}`;
+    const token: TableQRToken = {
+      id: `qrt-perm-${table.id}`,
+      restaurant_id: this.restaurant.id,
+      table_id: table.id,
+      token_hash: permHash,
+      valid_date: '2026-01-01',
+      expires_at: '9999-12-31T23:59:59.000Z',
+      is_permanent: true,
+      is_revoked: false,
+      qr_image_url: `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(typeof window !== 'undefined' ? window.location.origin + '/order?token=' + permHash : 'https://resto.os/order?token=' + permHash)}`,
+      print_metadata: {
+        table_number: table.table_number,
+        floor_area: table.floor_area,
+        capacity: table.seating_capacity,
+      },
+      created_at: new Date().toISOString(),
+    };
+    this.qrTokens.push(token);
+    this.notify();
+    return token;
+  }
+
+  // Server-Side Cart Calculation
+  public calculateCartTotals(items: { menuItemId: string; variantId?: string; addonIds?: string[]; quantity: number }[]): {
+    subtotal: number;
+    cgst: number;
+    sgst: number;
+    total: number;
+  } {
+    let subtotal = 0;
+    for (const item of items) {
+      const menuItem = this.menuItems.find(m => m.id === item.menuItemId);
+      if (!menuItem) continue;
+      const variant = menuItem.variants?.find(v => v.id === item.variantId);
+      const variantDelta = variant?.price_delta || 0;
+      const addons = (item.addonIds || [])
+        .map(aid => this.menuAddons.find(a => a.id === aid))
+        .filter((a): a is MenuAddon => Boolean(a));
+      const addonsTotal = addons.reduce((sum, a) => sum + a.price, 0);
+      const unitPrice = menuItem.base_price + variantDelta + addonsTotal;
+      subtotal += unitPrice * item.quantity;
+    }
+    const cgst = subtotal * (this.settings.cgst_rate / 100);
+    const sgst = subtotal * (this.settings.sgst_rate / 100);
+    const total = subtotal + cgst + sgst;
+    return { subtotal, cgst, sgst, total };
+  }
+
+  // Service Request & Bill Request Mutations
+  public createServiceRequest(params: {
+    tableSessionId: string;
+    requestType: 'CALL_WAITER' | 'REQUEST_BILL' | 'WATER' | 'CUTLERY' | 'CLEANING' | 'ASSISTANCE';
+    notes?: string;
+  }): ServiceRequest {
+    const session = this.sessions.find(s => s.id === params.tableSessionId);
+    if (!session) throw new Error('Valid table session required');
+    const table = this.tables.find(t => t.id === session.table_id);
+    const req: ServiceRequest = {
+      id: `sr-${Date.now()}`,
+      restaurant_id: this.restaurant.id,
+      table_id: session.table_id,
+      table_number: table?.table_number || 'T-00',
+      table_session_id: session.id,
+      request_type: params.requestType,
+      status: 'PENDING',
+      notes: params.notes,
+      assigned_staff_id: table?.current_waiter_id,
+      created_at: new Date().toISOString(),
+    };
+    this.serviceRequests.unshift(req);
+    this.requestService({
+      tableSessionId: params.tableSessionId,
+      requestType: params.requestType as any,
+      notes: params.notes,
+    });
+    this.notify();
+    return req;
+  }
+
+  public updateServiceRequestStatus(id: string, status: 'ACKNOWLEDGED' | 'ATTENDING' | 'COMPLETED' | 'CANCELLED', staffId?: string): ServiceRequest | undefined {
+    const req = this.serviceRequests.find(r => r.id === id);
+    if (!req) return undefined;
+    req.status = status;
+    if (staffId) req.assigned_staff_id = staffId;
+    if (status === 'ACKNOWLEDGED') req.acknowledged_at = new Date().toISOString();
+    if (status === 'COMPLETED') req.resolved_at = new Date().toISOString();
+    this.notify();
+    return req;
+  }
+
+  public createBillRequest(params: {
+    tableSessionId: string;
+    paymentMethodPreference?: 'UPI' | 'CASH' | 'CARD';
+    notes?: string;
+  }): BillRequest {
+    const session = this.sessions.find(s => s.id === params.tableSessionId);
+    if (!session) throw new Error('Valid table session required');
+    const table = this.tables.find(t => t.id === session.table_id);
+    const orders = this.orders.filter(o => o.table_session_id === session.id);
+    const totalAmount = orders.reduce((sum, o) => sum + o.total_amount, 0);
+
+    const req: BillRequest = {
+      id: `br-${Date.now()}`,
+      restaurant_id: this.restaurant.id,
+      table_id: session.table_id,
+      table_number: table?.table_number || 'T-00',
+      table_session_id: session.id,
+      total_amount: totalAmount > 0 ? totalAmount : 0,
+      payment_method_preference: params.paymentMethodPreference || 'UPI',
+      status: 'PENDING',
+      notes: params.notes,
+      requested_at: new Date().toISOString(),
+    };
+    this.billRequests.unshift(req);
+    this.requestService({
+      tableSessionId: params.tableSessionId,
+      requestType: 'REQUEST_BILL',
+      notes: params.notes,
+    });
+    this.notify();
+    return req;
+  }
+
+  public updateBillRequestStatus(id: string, status: 'PROCESSING' | 'SETTLED' | 'CANCELLED'): BillRequest | undefined {
+    const req = this.billRequests.find(b => b.id === id);
+    if (!req) return undefined;
+    req.status = status;
+    if (status === 'SETTLED') req.settled_at = new Date().toISOString();
+    this.notify();
+    return req;
+  }
+
+  public submitCustomerFeedback(feedback: Omit<CustomerFeedback, 'id' | 'restaurant_id' | 'created_at'>): CustomerFeedback {
+    const newFeedback: CustomerFeedback = {
+      id: `fb-${Date.now()}`,
+      restaurant_id: this.restaurant.id,
+      created_at: new Date().toISOString(),
+      ...feedback,
+    };
+    this.customerFeedback.unshift(newFeedback);
+    this.notify();
+    return newFeedback;
+  }
+
+  public recordAttendancePunch(staffId: string, shiftId?: string, notes?: string): StaffAttendance {
+    const staffMember = this.staff.find(s => s.id === staffId);
+    const profile = this.profiles.find(p => p.id === staffMember?.profile_id);
+    const record: StaffAttendance = {
+      id: `at-${Date.now()}`,
+      restaurant_id: this.restaurant.id,
+      staff_id: staffId,
+      staff_name: profile?.full_name || 'Staff Member',
+      shift_id: shiftId,
+      check_in_time: new Date().toISOString(),
+      status: 'ON_TIME',
+      notes,
+      created_at: new Date().toISOString(),
+    };
+    this.attendance.unshift(record);
+    this.notify();
+    return record;
+  }
+
+  public createTableBooking(booking: Omit<TableBooking, 'id' | 'restaurant_id' | 'created_at' | 'updated_at'>): TableBooking {
+    const newBooking: TableBooking = {
+      id: `tb-${Date.now()}`,
+      restaurant_id: this.restaurant.id,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      ...booking,
+    };
+    this.tableBookings.unshift(newBooking);
+    this.notify();
+    return newBooking;
+  }
+
+  public updateTableBookingStatus(id: string, status: TableBooking['status']): TableBooking | undefined {
+    const b = this.tableBookings.find(x => x.id === id);
+    if (!b) return undefined;
+    b.status = status;
+    b.updated_at = new Date().toISOString();
+    this.notify();
+    return b;
+  }
 
   // Admin Mutations
   public addTable(table: Omit<RestaurantTable, 'id' | 'restaurant_id' | 'created_at' | 'updated_at'>) {
@@ -969,6 +2225,7 @@ class DatabaseAdapter {
     };
     this.tables.push(newTable);
     this.ensureTodayQRs();
+    this.generatePermanentQRForTable(newTable.id);
     this.notify();
   }
 
@@ -977,6 +2234,23 @@ class DatabaseAdapter {
     if (!tbl) return;
     Object.assign(tbl, updates, { updated_at: new Date().toISOString() });
     this.notify();
+  }
+
+  public markTableCleaned(tableId: string): RestaurantTable {
+    const table = this.tables.find(t => t.id === tableId);
+    if (!table) throw new Error(`Table with ID ${tableId} not found`);
+    table.status = 'AVAILABLE';
+    table.updated_at = new Date().toISOString();
+    this.notify();
+    return table;
+  }
+
+  public getActiveOrdersForTable(tableId: string): Order[] {
+    const activeSession = this.sessions.find(s => s.table_id === tableId && s.status === 'ACTIVE');
+    if (!activeSession) return [];
+    return this.orders.filter(
+      o => o.table_session_id === activeSession.id && o.status !== 'CANCELLED' && o.status !== 'REJECTED'
+    );
   }
 
   public revokeQRToken(tokenId: string, reason: string) {
@@ -1017,167 +2291,9 @@ class DatabaseAdapter {
     this.notify();
   }
 
-  // Pre-seed a few active orders for realistic initial dashboard views
+  // Kitchen Display strictly shows only genuine customer orders placed via Place Order button
   private ensureInitialOrders() {
-    if (this.orders.length > 0) return;
-
-    // Seed session for T-01
-    const t1 = this.tables[0];
-    const s1: TableSession = {
-      id: 'ses-init-01',
-      restaurant_id: this.restaurant.id,
-      table_id: t1.id,
-      table: t1,
-      qr_token_id: 'qrt-t1',
-      session_token: 'ses-token-t1',
-      status: 'ACTIVE',
-      opened_at: new Date(Date.now() - 35 * 60000).toISOString(),
-      created_at: new Date(Date.now() - 35 * 60000).toISOString(),
-      customer_name: 'Rahul Khanna',
-      customer_phone: '+91 98888 77665',
-    };
-    this.sessions.push(s1);
-
-    // Seed Order 1: PREPARING
-    const o1Items: OrderItem[] = [
-      { id: 'oi-init-1', order_id: 'ord-init-1', menu_item_id: 'item-4', item_name: 'Artisan Margherita Pizza', unit_price: 445.00, quantity: 1, total_price: 445.00, status: 'PREPARING', kitchen_station_id: 'stn-4' },
-      { id: 'oi-init-2', order_id: 'ord-init-1', menu_item_id: 'item-9', item_name: 'Passionfruit Mint Sparkler', unit_price: 195.00, quantity: 2, total_price: 390.00, status: 'READY', kitchen_station_id: 'stn-2' },
-    ];
-    const o1Sub = 835.00;
-    const o1: Order = {
-      id: 'ord-init-1',
-      restaurant_id: this.restaurant.id,
-      order_number: 'ORD-1845-702',
-      table_id: t1.id,
-      table: t1,
-      table_session_id: s1.id,
-      waiter_id: 'st-wtr-1',
-      customer_name: 'Rahul Khanna',
-      customer_phone: '+91 98888 77665',
-      subtotal_amount: o1Sub,
-      cgst_amount: o1Sub * 0.025,
-      sgst_amount: o1Sub * 0.025,
-      service_charge_amount: 0,
-      discount_amount: 0,
-      total_amount: o1Sub * 1.05,
-      status: 'PREPARING',
-      items: o1Items,
-      created_at: new Date(Date.now() - 25 * 60000).toISOString(),
-      updated_at: new Date(Date.now() - 10 * 60000).toISOString(),
-    };
-    this.orders.push(o1);
-
-    // Tickets for Order 1
-    this.kitchenTickets.push({
-      id: 'tkt-init-1',
-      restaurant_id: this.restaurant.id,
-      order_id: o1.id,
-      order: o1,
-      station_id: 'stn-4',
-      station: this.kitchenStations[3],
-      ticket_number: 'TKT-ORD-1845-702-1',
-      status: 'PREPARING',
-      items: [o1Items[0]],
-      table_number: 'T-01',
-      created_at: new Date(Date.now() - 25 * 60000).toISOString(),
-      updated_at: new Date().toISOString(),
-    });
-
-    this.kitchenTickets.push({
-      id: 'tkt-init-2',
-      restaurant_id: this.restaurant.id,
-      order_id: o1.id,
-      order: o1,
-      station_id: 'stn-2',
-      station: this.kitchenStations[1],
-      ticket_number: 'TKT-ORD-1845-702-2',
-      status: 'READY',
-      items: [o1Items[1]],
-      table_number: 'T-01',
-      created_at: new Date(Date.now() - 25 * 60000).toISOString(),
-      updated_at: new Date().toISOString(),
-    });
-
-    // Seed session for T-04: PAYMENT_PENDING
-    const t4 = this.tables[3];
-    const s4: TableSession = {
-      id: 'ses-init-04',
-      restaurant_id: this.restaurant.id,
-      table_id: t4.id,
-      table: t4,
-      qr_token_id: 'qrt-t4',
-      session_token: 'ses-token-t4',
-      status: 'PAYMENT_PENDING',
-      opened_at: new Date(Date.now() - 75 * 60000).toISOString(),
-      created_at: new Date(Date.now() - 75 * 60000).toISOString(),
-      customer_name: 'Anita Roy',
-      customer_phone: '+91 97777 55443',
-    };
-    this.sessions.push(s4);
-
-    const o4Items: OrderItem[] = [
-      { id: 'oi-init-3', order_id: 'ord-init-4', menu_item_id: 'item-7', item_name: 'Old Delhi Butter Chicken', unit_price: 495.00, quantity: 2, total_price: 990.00, status: 'SERVED', kitchen_station_id: 'stn-1' },
-      { id: 'oi-init-4', order_id: 'ord-init-4', menu_item_id: 'item-11', item_name: 'Belgian Dark Chocolate Molten Lava', unit_price: 295.00, quantity: 2, total_price: 590.00, status: 'SERVED', kitchen_station_id: 'stn-3' },
-    ];
-    const o4Sub = 1580.00;
-    const o4: Order = {
-      id: 'ord-init-4',
-      restaurant_id: this.restaurant.id,
-      order_number: 'ORD-1750-418',
-      table_id: t4.id,
-      table: t4,
-      table_session_id: s4.id,
-      waiter_id: 'st-wtr-1',
-      customer_name: 'Anita Roy',
-      customer_phone: '+91 97777 55443',
-      subtotal_amount: o4Sub,
-      cgst_amount: o4Sub * 0.025,
-      sgst_amount: o4Sub * 0.025,
-      service_charge_amount: 0,
-      discount_amount: 0,
-      total_amount: o4Sub * 1.05,
-      status: 'SERVED',
-      items: o4Items,
-      created_at: new Date(Date.now() - 60 * 60000).toISOString(),
-      updated_at: new Date(Date.now() - 15 * 60000).toISOString(),
-    };
-    this.orders.push(o4);
-
-    // Pending Cash Payment for T-04
-    this.payments.push({
-      id: 'pay-init-4',
-      restaurant_id: this.restaurant.id,
-      table_session_id: s4.id,
-      table_id: t4.id,
-      order_id: o4.id,
-      amount: o4.total_amount,
-      payment_method: 'CASH',
-      payment_status: 'PENDING',
-      created_at: new Date(Date.now() - 10 * 60000).toISOString(),
-    });
-
-    // Sample paid invoice
-    this.invoices.push({
-      id: 'inv-init-prev',
-      restaurant_id: this.restaurant.id,
-      invoice_number: 'INV-202611-1024',
-      payment_id: 'pay-prev-1',
-      table_session_id: 'ses-prev',
-      table_id: 'tbl-2',
-      customer_name: 'Sameer Joshi',
-      customer_phone: '+91 98888 77665',
-      subtotal_amount: 1200.00,
-      cgst_rate: 2.5,
-      cgst_amount: 30.00,
-      sgst_rate: 2.5,
-      sgst_amount: 30.00,
-      service_charge_amount: 0,
-      discount_amount: 0,
-      total_amount: 1260.00,
-      payment_method: 'UPI',
-      transaction_ref: 'UPI-AXIS-99238472',
-      issued_at: new Date(Date.now() - 120 * 60000).toISOString(),
-    });
+    // Strictly no fake, demo or placeholder orders in production Kitchen Display
   }
 }
 

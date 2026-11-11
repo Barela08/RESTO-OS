@@ -7,6 +7,7 @@ import { Modal } from '../../components/ui/Modal';
 import { Input } from '../../components/ui/Input';
 import { TableStatusBadge } from '../../components/ui/Badge';
 import { QRCard } from '../../components/common/QRCard';
+import { TableDetailModal } from '../../components/common/TableDetailModal';
 import {
   UtensilsCrossed,
   Plus,
@@ -17,6 +18,7 @@ import {
   Trash2,
   CheckCircle2,
   Filter,
+  Eye,
 } from 'lucide-react';
 
 export const AdminTables: React.FC = () => {
@@ -24,6 +26,7 @@ export const AdminTables: React.FC = () => {
   const [qrTokens, setQrTokens] = useState(dbAdapter.getQRTokens());
   const [staff, setStaff] = useState(dbAdapter.getStaff());
   const [selectedArea, setSelectedArea] = useState<string>('all');
+  const [selectedDetailTable, setSelectedDetailTable] = useState<RestaurantTable | null>(null);
 
   // Add / Edit Modal state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -35,6 +38,7 @@ export const AdminTables: React.FC = () => {
 
   // QR Preview Modal
   const [previewingTable, setPreviewingTable] = useState<RestaurantTable | null>(null);
+  const [qrTypeView, setQrTypeView] = useState<'permanent' | 'daily'>('permanent');
 
   const restaurant = dbAdapter.getRestaurant();
 
@@ -182,9 +186,15 @@ export const AdminTables: React.FC = () => {
                 key={tbl.id}
                 className="bg-white rounded-2xl border border-slate-200 shadow-card p-5 flex flex-col justify-between hover:shadow-card-hover transition-all"
               >
-                <div>
+                <div
+                  onClick={() => setSelectedDetailTable(tbl)}
+                  className="cursor-pointer group"
+                  title="Click to view full table details, orders and menu"
+                >
                   <div className="flex items-center justify-between mb-2">
-                    <span className="font-extrabold text-slate-900 text-lg">{tbl.table_number}</span>
+                    <span className="font-extrabold text-slate-900 text-lg group-hover:text-brand-orange transition-colors">
+                      {tbl.table_number}
+                    </span>
                     <TableStatusBadge status={tbl.status} />
                   </div>
 
@@ -192,6 +202,11 @@ export const AdminTables: React.FC = () => {
                     <p className="font-semibold text-slate-700">{tbl.floor_area}</p>
                     <p>{tbl.seating_capacity} Seater Capacity</p>
                     {tbl.description && <p className="text-[11px] text-slate-400 italic">{tbl.description}</p>}
+                  </div>
+
+                  <div className="flex items-center gap-1.5 text-[11px] font-bold text-brand-orange mb-2">
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>View Orders & Menu</span>
                   </div>
                 </div>
 
@@ -309,18 +324,55 @@ export const AdminTables: React.FC = () => {
       <Modal
         isOpen={Boolean(previewingTable)}
         onClose={() => setPreviewingTable(null)}
-        title={previewingTable ? `Daily Table QR: ${previewingTable.table_number}` : ''}
+        title={previewingTable ? `Table QR Code: ${previewingTable.table_number}` : ''}
       >
         {previewingTable && (
-          <div className="max-w-sm mx-auto">
+          <div className="max-w-sm mx-auto space-y-3">
+            <div className="flex bg-slate-100 p-1 rounded-xl text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setQrTypeView('permanent')}
+                className={`flex-1 py-1.5 rounded-lg transition-all ${
+                  qrTypeView === 'permanent'
+                    ? 'bg-white text-slate-900 shadow-sm font-bold'
+                    : 'text-slate-500 hover:text-slate-900'
+                }`}
+              >
+                Permanent QR (Recommended)
+              </button>
+              <button
+                type="button"
+                onClick={() => setQrTypeView('daily')}
+                className={`flex-1 py-1.5 rounded-lg transition-all ${
+                  qrTypeView === 'daily'
+                    ? 'bg-white text-slate-900 shadow-sm font-bold'
+                    : 'text-slate-500 hover:text-slate-900'
+                }`}
+              >
+                Daily QR
+              </button>
+            </div>
+
             <QRCard
               table={previewingTable}
-              token={qrTokens.find(q => q.table_id === previewingTable.id && !q.is_revoked)}
+              token={
+                qrTypeView === 'permanent'
+                  ? dbAdapter.getPermanentQRForTable(previewingTable.id) || qrTokens.find(q => q.table_id === previewingTable.id && q.is_permanent && !q.is_revoked)
+                  : qrTokens.find(q => q.table_id === previewingTable.id && !q.is_permanent && !q.is_revoked)
+              }
               restaurantName={restaurant.name}
             />
           </div>
         )}
       </Modal>
+
+      {/* Full Table Details & Menu Viewer Modal */}
+      <TableDetailModal
+        table={selectedDetailTable}
+        isOpen={Boolean(selectedDetailTable)}
+        onClose={() => setSelectedDetailTable(null)}
+        onStatusChange={handleStatusChange}
+      />
     </AdminLayout>
   );
 };

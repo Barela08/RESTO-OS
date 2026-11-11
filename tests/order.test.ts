@@ -4,7 +4,7 @@ import { dbAdapter } from '../src/services/databaseAdapter';
 describe('Order Creation & Multi-Station Routing', () => {
   it('ORD-01: Places order with server-calculated GST and snapshots items', () => {
     // Pick an active session
-    const session = dbAdapter.getSessions().find(s => s.status === 'ACTIVE') || dbAdapter.getSessions()[0];
+    const session = dbAdapter.getSessions().find(s => s.status === 'ACTIVE') || dbAdapter.getOrCreateActiveSession(dbAdapter.getTables()[0].id);
     const items = dbAdapter.getMenuItems();
     const pizzaItem = items.find(i => i.name.includes('Pizza')) || items[0];
     const beverageItem = items.find(i => i.category_id === 'cat-4') || items[1];
@@ -31,7 +31,7 @@ describe('Order Creation & Multi-Station Routing', () => {
   });
 
   it('ORD-02: Routes order items into separate kitchen station tickets', () => {
-    const session = dbAdapter.getSessions().find(s => s.status === 'ACTIVE') || dbAdapter.getSessions()[0];
+    const session = dbAdapter.getSessions().find(s => s.status === 'ACTIVE') || dbAdapter.getOrCreateActiveSession(dbAdapter.getTables()[0].id);
     const items = dbAdapter.getMenuItems();
 
     const order = dbAdapter.placeOrder({

@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Volume2, VolumeX, LogOut, ArrowLeft, RefreshCw } from 'lucide-react';
+import { Volume2, VolumeX, LogOut, ArrowLeft, RefreshCw, Mic, Sparkles } from 'lucide-react';
 import { audioService } from '../../services/audioService';
+import { voiceAnnouncementService } from '../../services/voiceAnnouncementService';
+import { dbAdapter } from '../../services/databaseAdapter';
 import { useAuthStore } from '../../store/authStore';
 
 interface StaffLayoutProps {
@@ -22,6 +24,18 @@ export const StaffLayout: React.FC<StaffLayoutProps> = ({
   const navigate = useNavigate();
   const { currentProfile, logout } = useAuthStore();
   const [isMuted, setIsMuted] = useState(audioService.getIsMuted());
+  const [isAudioUnlocked, setIsAudioUnlocked] = useState(voiceAnnouncementService.getIsAudioUnlocked());
+  const [voiceSettings, setVoiceSettings] = useState(dbAdapter.getVoiceSettings());
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('resto_active_role', activeRole);
+    }
+    const updateVoice = () => {
+      setVoiceSettings(dbAdapter.getVoiceSettings());
+    };
+    return dbAdapter.subscribe(updateVoice);
+  }, [activeRole]);
 
   const toggleSound = () => {
     const next = !isMuted;
@@ -29,8 +43,38 @@ export const StaffLayout: React.FC<StaffLayoutProps> = ({
     setIsMuted(next);
   };
 
+  const handleUnlockAudio = () => {
+    voiceAnnouncementService.unlockAudio();
+    setIsAudioUnlocked(true);
+    // Play test announcement
+    voiceAnnouncementService.testSpeech(
+      voiceSettings.language === 'hi'
+        ? `Audio active ho gaya hai. ${activeRole} station ready hai.`
+        : `Audio activated. ${activeRole} station is ready.`,
+      voiceSettings.language
+    );
+  };
+
   return (
     <div className="min-h-screen bg-[#0B1220] text-slate-100 flex flex-col font-sans">
+      {/* Autoplay Audio Activation Banner */}
+      {!isAudioUnlocked && (
+        <div
+          onClick={handleUnlockAudio}
+          className="bg-gradient-to-r from-brand-purple via-indigo-600 to-brand-orange text-white px-4 py-2.5 text-xs flex items-center justify-between cursor-pointer hover:opacity-95 transition-opacity shadow-md sticky top-0 z-40"
+        >
+          <div className="flex items-center gap-2 max-w-4xl mx-auto w-full">
+            <Volume2 className="w-4 h-4 animate-bounce text-amber-300 shrink-0" />
+            <span className="font-extrabold tracking-wide">
+              Browser Autoplay Restriction: Click here to activate Real-Time Voice Announcements on this {activeRole} device.
+            </span>
+          </div>
+          <button className="px-3 py-1 bg-white/20 hover:bg-white/30 rounded-lg text-xs font-bold shrink-0">
+            Enable Voice Alerts
+          </button>
+        </div>
+      )}
+
       {/* Top Bar for Staff Operations */}
       <header className="h-16 bg-[#111827] border-b border-slate-800 px-6 flex items-center justify-between sticky top-0 z-30 shadow-md">
         <div className="flex items-center gap-4">
@@ -47,6 +91,9 @@ export const StaffLayout: React.FC<StaffLayoutProps> = ({
               <span className="px-2 py-0.5 rounded-full bg-brand-purple/20 text-brand-purple text-[10px] font-bold uppercase tracking-wider">
                 {activeRole}
               </span>
+              <span className="px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 text-[10px] font-mono">
+                {voiceSettings.voice_enabled ? `Voice: ${voiceSettings.language.toUpperCase()}` : 'Voice OFF'}
+              </span>
             </div>
             {subtitle && <p className="text-xs text-slate-400">{subtitle}</p>}
           </div>
@@ -54,6 +101,18 @@ export const StaffLayout: React.FC<StaffLayoutProps> = ({
 
         <div className="flex items-center gap-3">
           {actions}
+
+          <button
+            onClick={() => {
+              if (!isAudioUnlocked) handleUnlockAudio();
+              else voiceAnnouncementService.testSpeech(undefined, voiceSettings.language);
+            }}
+            title="Test Voice Announcement"
+            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs flex items-center gap-1.5 transition-colors border border-slate-700"
+          >
+            <Mic className="w-3.5 h-3.5 text-brand-orange" />
+            <span className="hidden sm:inline font-semibold text-[11px]">Test Voice</span>
+          </button>
 
           <button
             onClick={() => window.location.reload()}

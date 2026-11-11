@@ -168,3 +168,47 @@ INSERT INTO inventory_items (id, restaurant_id, name, sku, unit, current_stock, 
 ('i0000001-0000-0000-0000-000000000004', 'rest-001-main', 'Single-Origin Arabica Beans', 'SKU-COF-01', 'kg', 6.000, 2.000, 850.00, 's0000001-0000-0000-0000-000000000002', true),
 ('i0000001-0000-0000-0000-000000000005', 'rest-001-main', 'Callebaut 70% Dark Chocolate', 'SKU-CHO-01', 'kg', 12.000, 3.000, 1100.00, 's0000001-0000-0000-0000-000000000002', true)
 ON CONFLICT (id) DO NOTHING;
+
+
+-- 10. PAYMENT SETTINGS & VOICE SETTINGS
+INSERT INTO payment_settings (
+    restaurant_id, upi_id, merchant_name, qr_image_url, upi_enabled, cash_enabled, manual_verification_enabled, require_transaction_ref, payment_instructions, upi_display_name
+) VALUES (
+    'rest-001-main', 'grandbistro@okaxis', 'The Grand Bistro & Craft Kitchen',
+    'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=upi://pay?pa=grandbistro@okaxis&pn=The+Grand+Bistro&cu=INR',
+    true, true, true, true,
+    'Scan with any UPI app (Google Pay, PhonePe, Paytm, BHIM) and submit the 12-digit UTR/Ref number for counter approval.',
+    'Direct UPI Payment (0% Fee)'
+) ON CONFLICT (restaurant_id) DO NOTHING;
+
+INSERT INTO voice_settings (
+    restaurant_id, user_id, language, voice_enabled, sound_enabled, volume, speech_rate, repeat_count
+) VALUES (
+    'rest-001-main', '11111111-1111-1111-1111-111111111111', 'hi', true, true, 1.0, 1.0, 1
+) ON CONFLICT (restaurant_id, user_id) DO NOTHING;
+
+-- 11. LOYALTY PROGRAMS
+INSERT INTO loyalty_programs (
+    id, restaurant_id, program_name, description, min_order_amount, stamps_per_order, stamps_required, reward_description, validity_days, is_active
+) VALUES (
+    'l0000001-0000-0000-0000-000000000001', 'rest-001-main', 'Bistro Epicure Club',
+    'Earn 1 stamp on every dining order above ₹250. Collect 8 stamps to unlock a Complimentary Gourmet Starter or Artisan Dessert!',
+    250.00, 1, 8, 'Complimentary Gourmet Dessert or Craft Starter', 30, true
+) ON CONFLICT (id) DO NOTHING;
+
+-- 12. SHIFTS & ATTENDANCE
+INSERT INTO shifts (
+    id, restaurant_id, staff_id, shift_name, start_time, end_time, shift_date, status
+) VALUES 
+('sh-0001-0000-0000-000000000001', 'rest-001-main', 'a0000001-0000-0000-0000-000000000003', 'Evening Dinner Shift', '16:00:00', '23:30:00', CURRENT_DATE, 'ACTIVE'),
+('sh-0001-0000-0000-000000000002', 'rest-001-main', 'a0000001-0000-0000-0000-000000000004', 'Dinner Line Shift', '15:30:00', '23:30:00', CURRENT_DATE, 'ACTIVE'),
+('sh-0001-0000-0000-000000000003', 'rest-001-main', 'a0000001-0000-0000-0000-000000000005', 'Evening Counter Shift', '16:00:00', '23:45:00', CURRENT_DATE, 'ACTIVE')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO attendance (
+    id, restaurant_id, staff_id, shift_id, check_in_time, status, notes
+) VALUES
+('at-0001-0000-0000-000000000001', 'rest-001-main', 'a0000001-0000-0000-0000-000000000003', 'sh-0001-0000-0000-000000000001', NOW() - INTERVAL '3 hours', 'ON_TIME', 'Punched in via Staff Portal'),
+('at-0001-0000-0000-000000000002', 'rest-001-main', 'a0000001-0000-0000-0000-000000000004', 'sh-0001-0000-0000-000000000002', NOW() - INTERVAL '3 hours 30 minutes', 'ON_TIME', 'Punched in Kitchen line'),
+('at-0001-0000-0000-000000000003', 'rest-001-main', 'a0000001-0000-0000-0000-000000000005', 'sh-0001-0000-0000-000000000003', NOW() - INTERVAL '3 hours', 'ON_TIME', 'Punched at Cash Counter')
+ON CONFLICT (id) DO NOTHING;

@@ -25,7 +25,7 @@ export type PaymentStatus = 'UNPAID' | 'PENDING' | 'PROCESSING' | 'PAID' | 'FAIL
 
 export type ServiceRequestType = 'ASSISTANCE' | 'CALL_WAITER' | 'REQUEST_BILL' | 'CLEANING' | 'WATER';
 
-export type ServiceRequestStatus = 'PENDING' | 'ACKNOWLEDGED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+export type ServiceRequestStatus = 'PENDING' | 'ACKNOWLEDGED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'ESCALATED';
 
 export type RepeatScanStatus = 'PENDING' | 'APPROVED_CONTINUE' | 'APPROVED_NEW' | 'REJECTED';
 
@@ -115,6 +115,9 @@ export interface TableQRToken {
   token_hash: string;
   valid_date: string;
   expires_at: string;
+  is_permanent?: boolean;
+  qr_image_url?: string;
+  print_metadata?: Record<string, any>;
   is_revoked: boolean;
   revoked_at?: string;
   revoked_reason?: string;
@@ -133,6 +136,7 @@ export interface TableSession {
   closed_at?: string;
   customer_name?: string;
   customer_phone?: string;
+  customer_id?: string;
   created_at: string;
 }
 
@@ -298,6 +302,7 @@ export interface WaiterCall {
   notes?: string;
   acknowledged_at?: string;
   completed_at?: string;
+  is_escalated?: boolean;
   created_at: string;
 }
 
@@ -316,8 +321,10 @@ export interface Payment {
   cash_change_amount?: number;
   confirmed_by_staff_id?: string;
   confirmed_at?: string;
+  transaction_ref?: string;
   notes?: string;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface Invoice {
@@ -371,11 +378,19 @@ export interface LoyaltyReward {
   loyalty_account_id: string;
   voucher_code: string;
   title: string;
+  reward_title?: string;
+  reward_name?: string;
+  reward_type?: 'FREE_ITEM' | 'DISCOUNT_PERCENT' | 'FLAT_DISCOUNT';
+  discount_percentage?: number;
   description?: string;
   is_redeemed: boolean;
+  is_claimed?: boolean;
   redeemed_at?: string;
   expires_at: string;
   created_at: string;
+  redemption_code?: string;
+  redemption_code_hash?: string;
+  redeemed_order_id?: string;
 }
 
 export interface InventoryItem {
@@ -415,3 +430,265 @@ export interface NotificationItem {
   sound_type: 'CHIME' | 'ALERT' | 'BELL';
   created_at: string;
 }
+
+// ====================================================================
+// NEW MODULE TYPES: Voice Announcements, UPI QR, Customer Auth, Rewards
+// ====================================================================
+
+export type VoiceLanguage = 'hi' | 'en';
+
+export type VoiceEventType =
+  | 'NEW_ORDER'
+  | 'NEW_TABLE_ORDER'
+  | 'CALL_WAITER'
+  | 'REQUEST_BILL'
+  | 'ORDER_READY'
+  | 'PAYMENT_RECEIVED'
+  | 'REPEAT_SCAN'
+  | 'REPEAT_SCAN_APPROVAL'
+  | 'URGENT_ASSISTANCE'
+  | 'ORDER_CANCELLED';
+
+export interface VoiceSettings {
+  id: string;
+  restaurant_id: string;
+  user_id?: string;
+  language: VoiceLanguage;
+  voice_enabled: boolean;
+  sound_enabled: boolean;
+  volume: number;
+  speech_rate: number;
+  repeat_count: number;
+  enabled_events: Record<VoiceEventType, boolean>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NotificationEvent {
+  id: string;
+  restaurant_id: string;
+  event_type: VoiceEventType;
+  reference_id?: string;
+  event_payload: {
+    table_id?: string;
+    table_number?: string;
+    order_id?: string;
+    order_number?: string;
+    waiter_id?: string;
+    waiter_name?: string;
+    amount?: number;
+    request_type?: string;
+    reason?: string;
+    timestamp?: string;
+    [key: string]: any;
+  };
+  created_at: string;
+}
+
+export interface NotificationDeliveryLog {
+  id: string;
+  event_id: string;
+  recipient_user_id?: string;
+  device_id: string;
+  delivery_status: 'DELIVERED' | 'ACKNOWLEDGED';
+  acknowledged_at?: string;
+  created_at: string;
+}
+
+export interface PaymentSettings {
+  id: string;
+  restaurant_id: string;
+  upi_id: string;
+  merchant_name: string;
+  qr_image_url?: string;
+  upi_enabled: boolean;
+  cash_enabled: boolean;
+  manual_verification_enabled: boolean;
+  require_transaction_ref: boolean;
+  payment_instructions: string;
+  upi_display_name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PaymentVerificationRequest {
+  id: string;
+  restaurant_id: string;
+  payment_id: string;
+  order_id: string;
+  order_number?: string;
+  table_id?: string;
+  table_number?: string;
+  table_session_id?: string;
+  customer_id?: string;
+  customer_name?: string;
+  customer_phone?: string;
+  transaction_reference: string;
+  utr_number?: string;
+  submitted_amount: number;
+  expected_amount?: number;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  verified_by?: string;
+  verifier_name?: string;
+  rejection_reason?: string;
+  customer_notes?: string;
+  submitted_at: string;
+  created_at?: string;
+  verified_at?: string;
+}
+
+export interface CustomerOtpCode {
+  id: string;
+  phone: string;
+  otp_code: string;
+  expires_at: string;
+  is_verified: boolean;
+  attempts: number;
+  created_at?: string;
+}
+
+export interface RewardRedemption {
+  id: string;
+  restaurant_id: string;
+  reward_id: string;
+  customer_id: string;
+  redemption_code: string;
+  redemption_code_hash?: string;
+  order_id?: string;
+  table_id?: string;
+  redeemed_by?: string;
+  status: 'CLAIMED' | 'REDEEMED' | 'CANCELLED';
+  redeemed_at?: string;
+  created_at: string;
+}
+
+export interface TableBooking {
+  id: string;
+  restaurant_id: string;
+  customer_id?: string;
+  customer_name: string;
+  customer_phone: string;
+  customer_email?: string;
+  table_id?: string;
+  table_number?: string;
+  party_size: number;
+  booking_date: string;
+  booking_time: string;
+  status: 'PENDING' | 'CONFIRMED' | 'SEATED' | 'CANCELLED' | 'NO_SHOW';
+  special_requests?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ServiceRequest {
+  id: string;
+  restaurant_id: string;
+  table_id: string;
+  table_number?: string;
+  table_session_id: string;
+  request_type: 'CALL_WAITER' | 'REQUEST_BILL' | 'WATER' | 'CUTLERY' | 'CLEANING' | 'ASSISTANCE';
+  status: 'PENDING' | 'ACKNOWLEDGED' | 'ATTENDING' | 'COMPLETED' | 'CANCELLED';
+  notes?: string;
+  assigned_staff_id?: string;
+  assigned_staff_name?: string;
+  created_at: string;
+  acknowledged_at?: string;
+  resolved_at?: string;
+}
+
+export interface BillRequest {
+  id: string;
+  restaurant_id: string;
+  table_id: string;
+  table_number?: string;
+  table_session_id: string;
+  total_amount: number;
+  payment_method_preference: 'UPI' | 'CASH' | 'CARD';
+  status: 'PENDING' | 'PROCESSING' | 'SETTLED' | 'CANCELLED';
+  notes?: string;
+  requested_at: string;
+  settled_at?: string;
+}
+
+export interface CustomerSession {
+  id: string;
+  restaurant_id: string;
+  customer_id: string;
+  session_token: string;
+  device_info?: string;
+  ip_address?: string;
+  last_active_at: string;
+  created_at: string;
+}
+
+export interface CustomerVisit {
+  id: string;
+  restaurant_id: string;
+  customer_id: string;
+  table_id?: string;
+  table_session_id?: string;
+  visit_date: string;
+  total_spend: number;
+  orders_count: number;
+  created_at: string;
+}
+
+export interface CustomerFeedback {
+  id: string;
+  restaurant_id: string;
+  customer_id?: string;
+  customer_name?: string;
+  order_id?: string;
+  table_id?: string;
+  table_number?: string;
+  food_rating: number;
+  service_rating: number;
+  ambience_rating: number;
+  comments?: string;
+  created_at: string;
+}
+
+export interface LoyaltyProgram {
+  id: string;
+  restaurant_id: string;
+  program_name: string;
+  description?: string;
+  min_order_amount: number;
+  stamps_per_order: number;
+  stamps_required: number;
+  reward_description: string;
+  validity_days: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StaffShift {
+  id: string;
+  restaurant_id: string;
+  staff_id: string;
+  staff_name?: string;
+  shift_name: string;
+  start_time: string;
+  end_time: string;
+  shift_date: string;
+  status: 'SCHEDULED' | 'ACTIVE' | 'COMPLETED' | 'ABSENT';
+  notes?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface StaffAttendance {
+  id: string;
+  restaurant_id: string;
+  staff_id: string;
+  staff_name?: string;
+  shift_id?: string;
+  check_in_time: string;
+  check_out_time?: string;
+  status: 'ON_TIME' | 'LATE' | 'HALF_DAY';
+  notes?: string;
+  created_at: string;
+  updated_at?: string;
+}
+

@@ -4,7 +4,11 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 // Customer Views & Layout
 import { CustomerLayout } from '../../components/layout/CustomerLayout';
 import { CustomerSessionGuard } from '../guards/CustomerSessionGuard';
+import { CustomerHomePage } from '../../modules/customer/CustomerHomePage';
 import { MenuPage } from '../../modules/customer/MenuPage';
+import { CustomerBagPage } from '../../modules/customer/CustomerBagPage';
+import { CustomerOrdersPage } from '../../modules/customer/CustomerOrdersPage';
+import { CustomerProfilePage } from '../../modules/customer/CustomerProfilePage';
 import { OrderTrackingPage } from '../../modules/customer/OrderTrackingPage';
 import { CustomerPaymentPage } from '../../modules/customer/CustomerPaymentPage';
 import { CustomerLoyaltyPage } from '../../modules/customer/CustomerLoyaltyPage';
@@ -39,20 +43,95 @@ export const AppRouter: React.FC = () => {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Default redirect to customer order view */}
-        <Route path="/" element={<Navigate to="/order" replace />} />
-
         {/* ============================================================== */}
-        {/* CUSTOMER ROUTES (MOBILE-FIRST, SESSION-VERIFIED)               */}
+        {/* CUSTOMER ROUTES (RESPONSIVE DESKTOP & APP-LIKE MOBILE)         */}
         {/* ============================================================== */}
+        <Route
+          path="/"
+          element={
+            <CustomerLayout>
+              <CustomerHomePage />
+            </CustomerLayout>
+          }
+        />
+        <Route
+          path="/home"
+          element={
+            <CustomerLayout>
+              <CustomerHomePage />
+            </CustomerLayout>
+          }
+        />
+        <Route
+          path="/menu"
+          element={
+            <CustomerLayout>
+              <MenuPage />
+            </CustomerLayout>
+          }
+        />
         <Route
           path="/order"
           element={
-            <CustomerSessionGuard>
-              <CustomerLayout>
-                <MenuPage />
-              </CustomerLayout>
-            </CustomerSessionGuard>
+            <CustomerLayout>
+              <MenuPage />
+            </CustomerLayout>
+          }
+        />
+        <Route
+          path="/bag"
+          element={
+            <CustomerLayout>
+              <CustomerBagPage />
+            </CustomerLayout>
+          }
+        />
+        <Route
+          path="/cart"
+          element={
+            <CustomerLayout>
+              <CustomerBagPage />
+            </CustomerLayout>
+          }
+        />
+        <Route
+          path="/orders"
+          element={
+            <CustomerLayout>
+              <CustomerOrdersPage />
+            </CustomerLayout>
+          }
+        />
+        <Route
+          path="/my-orders"
+          element={
+            <CustomerLayout>
+              <CustomerOrdersPage />
+            </CustomerLayout>
+          }
+        />
+        <Route
+          path="/profile"
+          element={
+            <CustomerLayout>
+              <CustomerProfilePage />
+            </CustomerLayout>
+          }
+        />
+        <Route
+          path="/account"
+          element={
+            <CustomerLayout>
+              <CustomerProfilePage />
+            </CustomerLayout>
+          }
+        />
+        <Route
+          path="/my-rewards"
+          element={
+            <CustomerLayout>
+              <CustomerLoyaltyPage />
+            </CustomerLayout>
           }
         />
         <Route
@@ -72,10 +151,10 @@ export const AppRouter: React.FC = () => {
           }
         />
         <Route
-          path="/my-rewards"
+          path="/payment/:id"
           element={
             <CustomerLayout>
-              <CustomerLoyaltyPage />
+              <CustomerPaymentPage />
             </CustomerLayout>
           }
         />

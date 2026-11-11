@@ -79,9 +79,10 @@ export const useSessionStore = create<SessionState>((set, get) => {
       }
 
       if (result.isRepeatScan && result.session) {
+        sessionStorage.setItem('resto_customer_session', JSON.stringify(result.session));
         set({
-          isRepeatScanPending: true,
-          repeatRequestId: result.repeatRequestId || null,
+          isRepeatScanPending: false,
+          repeatRequestId: null,
           currentSession: result.session,
           table: result.table || null,
           isVerified: true,

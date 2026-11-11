@@ -25,6 +25,7 @@ export const AdminDailyQR: React.FC = () => {
   const [revokingToken, setRevokingToken] = useState<TableQRToken | null>(null);
   const [revokeReason, setRevokeReason] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [qrMode, setQrMode] = useState<'permanent' | 'daily'>('permanent');
 
   const restaurant = dbAdapter.getRestaurant();
   const timeRemaining = QRService.getTimeUntilMidnight();
@@ -160,14 +161,49 @@ export const AdminDailyQR: React.FC = () => {
 
         {/* Printable All Table QR Cards Grid */}
         <div className="space-y-3">
-          <div className="flex items-center justify-between no-print">
-            <h3 className="font-extrabold text-slate-900 text-sm">Today’s Table QR Standees</h3>
-            <span className="text-xs text-slate-500">{tables.length} Dining Tables</span>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 no-print">
+            <div>
+              <h3 className="font-extrabold text-slate-900 text-sm">
+                {qrMode === 'permanent' ? 'Permanent Table QR Standees (Standard)' : 'Today’s Dynamic QR Standees (Daily)'}
+              </h3>
+              <p className="text-xs text-slate-500">
+                {qrMode === 'permanent'
+                  ? 'Cryptographically linked permanent table QR codes. Print once for acrylic table stands.'
+                  : 'Rotating daily dynamic QR tokens that expire tonight at 11:59:59 PM.'}
+              </p>
+            </div>
+            <div className="flex bg-slate-100 p-1 rounded-xl text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setQrMode('permanent')}
+                className={`px-3 py-1.5 rounded-lg transition-all ${
+                  qrMode === 'permanent'
+                    ? 'bg-white text-slate-900 shadow-sm font-bold'
+                    : 'text-slate-500 hover:text-slate-900'
+                }`}
+              >
+                Permanent QR (Acrylic Stands)
+              </button>
+              <button
+                type="button"
+                onClick={() => setQrMode('daily')}
+                className={`px-3 py-1.5 rounded-lg transition-all ${
+                  qrMode === 'daily'
+                    ? 'bg-white text-slate-900 shadow-sm font-bold'
+                    : 'text-slate-500 hover:text-slate-900'
+                }`}
+              >
+                Daily Dynamic QR
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {tables.map((table) => {
-              const token = activeTokens.find(t => t.table_id === table.id);
+              const token =
+                qrMode === 'permanent'
+                  ? dbAdapter.getPermanentQRForTable(table.id) || activeTokens.find(t => t.table_id === table.id && t.is_permanent)
+                  : activeTokens.find(t => t.table_id === table.id && !t.is_permanent);
 
               return (
                 <div key={table.id} className="print-break-inside-avoid">

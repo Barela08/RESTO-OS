@@ -66,12 +66,16 @@ export const QRCard: React.FC<QRCardProps> = ({
       {/* Validity Meta */}
       <div className="w-full my-3 py-2 px-3 bg-slate-50 rounded-xl text-left border border-slate-100 text-[11px] space-y-1 font-mono">
         <div className="flex justify-between text-slate-600">
-          <span>Date:</span>
-          <strong>{token ? formatDate(token.valid_date) : 'Today'}</strong>
+          <span>Type:</span>
+          <strong className={token?.is_permanent ? 'text-green-700' : 'text-slate-900'}>
+            {token?.is_permanent ? 'Permanent Table QR' : 'Daily Dynamic QR'}
+          </strong>
         </div>
         <div className="flex justify-between text-slate-600">
-          <span>Expires:</span>
-          <span className="text-amber-600 font-bold">11:59:59 PM Local</span>
+          <span>Validity:</span>
+          <span className={token?.is_permanent ? 'text-green-600 font-bold' : 'text-amber-600 font-bold'}>
+            {token?.is_permanent ? 'Permanent (Never Expires)' : 'Expires 11:59:59 PM'}
+          </span>
         </div>
         <div className="flex justify-between text-slate-500 truncate">
           <span>Token:</span>

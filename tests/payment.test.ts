@@ -4,7 +4,7 @@ import { dbAdapter } from '../src/services/databaseAdapter';
 describe('Cash Counter Payment Settlement & Loyalty Stamps', () => {
   it('PAY-01: Confirms cash payment, verifies change, and issues tax invoice', () => {
     // Initiate cash payment
-    const session = dbAdapter.getSessions()[0];
+    const session = dbAdapter.getSessions()[0] || dbAdapter.getOrCreateActiveSession(dbAdapter.getTables()[0].id);
     const payment = dbAdapter.initiateCustomerPayment({
       tableSessionId: session.id,
       method: 'CASH',
