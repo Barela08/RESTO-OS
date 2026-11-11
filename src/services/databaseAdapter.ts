@@ -1039,12 +1039,26 @@ class DatabaseAdapter {
   // ------------------------------------------------------------------
   // 4. WAITER CALLS & REALTIME SERVICE REQUESTS
   // ------------------------------------------------------------------
-  public requestService(params: {
-    tableSessionId: string;
-    requestType: 'CALL_WAITER' | 'REQUEST_BILL' | 'ASSISTANCE' | 'WATER' | 'CLEANING';
-    notes?: string;
-    priority?: 'NORMAL' | 'URGENT';
-  }): WaiterCall {
+  public requestService(
+    paramsOrSessionId: string | {
+      tableSessionId: string;
+      requestType: 'CALL_WAITER' | 'REQUEST_BILL' | 'ASSISTANCE' | 'WATER' | 'CLEANING';
+      notes?: string;
+      priority?: 'NORMAL' | 'URGENT';
+    },
+    posRequestType: 'CALL_WAITER' | 'REQUEST_BILL' | 'ASSISTANCE' | 'WATER' | 'CLEANING' = 'CALL_WAITER',
+    posNotes?: string,
+    posPriority?: 'NORMAL' | 'URGENT'
+  ): WaiterCall {
+    const params = typeof paramsOrSessionId === 'string'
+      ? {
+          tableSessionId: paramsOrSessionId,
+          requestType: posRequestType,
+          notes: posNotes,
+          priority: posPriority,
+        }
+      : paramsOrSessionId;
+
     const session = this.sessions.find(s => s.id === params.tableSessionId);
     if (!session || session.status !== 'ACTIVE') {
       throw new Error('Valid active table session required');
@@ -1373,6 +1387,7 @@ class DatabaseAdapter {
         if (callTime <= cutoff) {
           call.is_escalated = true;
           call.status = 'ESCALATED';
+          call.priority = 'URGENT';
           call.escalated_at = new Date().toISOString();
           call.updated_at = new Date().toISOString();
           escalatedCount++;
@@ -3098,7 +3113,7 @@ class DatabaseAdapter {
   }
 
   // Admin Mutations
-  public addTable(table: Omit<RestaurantTable, 'id' | 'restaurant_id' | 'created_at' | 'updated_at'>) {
+  public addTable(table: Omit<RestaurantTable, 'id' | 'restaurant_id' | 'created_at' | 'updated_at'>): RestaurantTable {
     const newTable: RestaurantTable = {
       id: `tbl-${Date.now()}`,
       restaurant_id: this.restaurant.id,
@@ -3110,6 +3125,7 @@ class DatabaseAdapter {
     this.ensureTodayQRs();
     this.generatePermanentQRForTable(newTable.id);
     this.notify();
+    return newTable;
   }
 
   public updateTable(id: string, updates: Partial<RestaurantTable>) {
@@ -3117,6 +3133,11 @@ class DatabaseAdapter {
     if (!tbl) return;
     Object.assign(tbl, updates, { updated_at: new Date().toISOString() });
     this.notify();
+  }
+
+  public assignWaiterToTable(id: string, waiterId: string) {
+    this.updateTable(id, { current_waiter_id: waiterId });
+    return this.tables.find(t => t.id === id);
   }
 
   public markTableCleaned(tableId: string): RestaurantTable {

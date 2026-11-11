@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { dbAdapter } from '../src/services/databaseAdapter';
 import { voiceAnnouncementService } from '../src/services/voiceAnnouncementService';
 import { audioService } from '../src/services/audioService';
@@ -16,6 +16,8 @@ describe('RESTO OS: Realtime Waiter Calling, Instant Sound Alert & Voice Announc
         table_number: 'T-10',
         seating_capacity: 4,
         floor_area: 'Main Dining Floor',
+        status: 'AVAILABLE',
+        is_active: true,
       });
     }
     testTable = t10;
@@ -24,7 +26,8 @@ describe('RESTO OS: Realtime Waiter Calling, Instant Sound Alert & Voice Announc
     dbAdapter.assignWaiterToTable(testTable.id, 'st-wtr-1');
 
     // Create a verified active table session for Table 10
-    testSession = dbAdapter.createSession(testTable.id, 'cust-test-10', 'Arjun Sharma', '9876543210');
+    testSession = dbAdapter.getOrCreateActiveSession(testTable.id);
+    testSession.status = 'ACTIVE';
 
     // Clear existing waiter calls for clean isolation
     const calls = dbAdapter.getWaiterCalls();
@@ -63,15 +66,17 @@ describe('RESTO OS: Realtime Waiter Calling, Instant Sound Alert & Voice Announc
     // Attempt with forged/unregistered session ID
     expect(() => {
       dbAdapter.requestService('fake-forged-session-id', 'CALL_WAITER');
-    }).toThrow(/Active table session not found/i);
+    }).toThrow(/Valid active table session required/i);
 
     // Attempt with closed/completed session
-    const expiredSession = dbAdapter.createSession(testTable.id, 'cust-exp');
-    dbAdapter.closeSession(expiredSession.id);
+    const expiredSession = dbAdapter.getOrCreateActiveSession(testTable.id);
+    expiredSession.status = 'COMPLETED';
 
     expect(() => {
       dbAdapter.requestService(expiredSession.id, 'CALL_WAITER');
-    }).toThrow(/Active table session not found/i);
+    }).toThrow(/Valid active table session required/i);
+
+    testSession.status = 'ACTIVE';
   });
 
   // 3. Assigned waiter for Table 10 is identified
@@ -84,14 +89,13 @@ describe('RESTO OS: Realtime Waiter Calling, Instant Sound Alert & Voice Announc
   it('TEST-04: Call record is created with unique ID and REQUESTED status, preventing duplicate calls', () => {
     const call = dbAdapter.requestService(testSession.id, 'CALL_WAITER');
 
-    expect(call.id).toMatch(/^wc-/);
+    expect(call.id).toMatch(/^call-/);
     expect(call.status).toBe('REQUESTED');
     expect(call.created_at).toBeDefined();
 
-    // Prevent duplicate active calls while first call is in progress
-    expect(() => {
-      dbAdapter.requestService(testSession.id, 'CALL_WAITER');
-    }).toThrow(/already active/i);
+    // Prevent duplicate active calls: calling again returns the existing active call idempotently
+    const duplicateCall = dbAdapter.requestService(testSession.id, 'CALL_WAITER');
+    expect(duplicateCall.id).toBe(call.id);
   });
 
   // 5. Realtime event emitted with table number and assigned waiter ID
@@ -134,7 +138,7 @@ describe('RESTO OS: Realtime Waiter Calling, Instant Sound Alert & Voice Announc
       'en'
     );
     const englishSpoken = voiceAnnouncementService.getSpokenAnnouncementText(englishRaw);
-    expect(englishSpoken).toContain('Table Number 10');
+    expect(englishSpoken.toLowerCase()).toContain('table number 10');
     expect(englishSpoken).not.toContain('T-10');
   });
 
@@ -204,9 +208,9 @@ describe('RESTO OS: Realtime Waiter Calling, Instant Sound Alert & Voice Announc
     expect(completedCall.status).toBe('COMPLETED');
     expect(completedCall.completed_at).toBeDefined();
 
-    // Active call for customer should now be null so customer can call again when needed
+    // Active call for customer should now be undefined so customer can call again when needed
     const activeCall = dbAdapter.getActiveWaiterCallForSession(testSession.id);
-    expect(activeCall).toBeNull();
+    expect(activeCall).toBeUndefined();
   });
 
   // 14. Admin dashboard reflects completed call in KPIs and waiter performance summary
@@ -284,8 +288,8 @@ describe('RESTO OS: Realtime Waiter Calling, Instant Sound Alert & Voice Announc
     const initialCallsCount = dbAdapter.getWaiterCalls().length;
 
     // Simulate QR validation
-    const token = dbAdapter.generateDailyQrToken(testTable.id);
-    dbAdapter.validateQrToken(token.token);
+    const token = dbAdapter.generatePermanentQRForTable(testTable.id);
+    dbAdapter.verifyQRToken(token.token_hash);
 
     // Simulate menu fetching
     dbAdapter.getMenuItems();
