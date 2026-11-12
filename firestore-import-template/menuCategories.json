@@ -1,0 +1,47 @@
+[
+  {
+    "_id": "cat-starters",
+    "restaurantId": "rest-001-main",
+    "name": "Artisanal Starters",
+    "slug": "starters",
+    "icon": "Utensils",
+    "displayOrder": 1,
+    "isActive": true
+  },
+  {
+    "_id": "cat-mains",
+    "restaurantId": "rest-001-main",
+    "name": "Curries & Signature Mains",
+    "slug": "mains",
+    "icon": "Flame",
+    "displayOrder": 2,
+    "isActive": true
+  },
+  {
+    "_id": "cat-breads",
+    "restaurantId": "rest-001-main",
+    "name": "Tandoori Breads & Rice",
+    "slug": "breads",
+    "icon": "Wheat",
+    "displayOrder": 3,
+    "isActive": true
+  },
+  {
+    "_id": "cat-desserts",
+    "restaurantId": "rest-001-main",
+    "name": "Artisan Desserts",
+    "slug": "desserts",
+    "icon": "Sparkles",
+    "displayOrder": 4,
+    "isActive": true
+  },
+  {
+    "_id": "cat-beverages",
+    "restaurantId": "rest-001-main",
+    "name": "Mocktails & Beverages",
+    "slug": "beverages",
+    "icon": "Coffee",
+    "displayOrder": 5,
+    "isActive": true
+  }
+]
