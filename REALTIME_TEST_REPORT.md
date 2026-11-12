@@ -2,7 +2,7 @@
 **Multi-Device Synchronization, Audio Chimes & Voice Dispatch Verification**  
 **Date:** November 12, 2026  
 **Test Harness:** Vitest 4.1.12 with Live Firestore Client Emulation  
-**Total Tests:** 164 Passed / 0 Failed (18 Test Suites)
+**Total Tests:** 170 Passed / 0 Failed (19 Test Suites)
 
 ---
 
@@ -74,6 +74,16 @@ Customer Device                Kitchen Display               Waiter Station     
 | `TEST-18` | Historical calls do not replay sound on page reload | **PASSED** |
 | `TEST-19` | All actions logged in security audit history | **PASSED** |
 | `TEST-20` | Customer can cancel call before waiter accepts | **PASSED** |
+
+### 2.4 Section 16 Required Scenarios Suite (`tests/production_e2e_scenarios.test.ts`)
+| Scenario ID | Test Specification | Verification Result |
+|---|---|---|
+| `TEST 1` | **TABLE AVAILABILITY:** Open QR $\rightarrow$ AVAILABLE; Browse menu $\rightarrow$ AVAILABLE; Cart $\rightarrow$ AVAILABLE; Place order $\rightarrow$ OCCUPIED | **PASSED** |
+| `TEST 2` | **WAITER CALL:** Mobile customer calls waiter $\rightarrow$ exact table on waiter device $\rightarrow$ waiter accepts $\rightarrow$ customer status syncs | **PASSED** |
+| `TEST 3` | **ORDER PIPELINE:** Full lifecycle NEW $\rightarrow$ ACCEPTED $\rightarrow$ PREPARING $\rightarrow$ READY $\rightarrow$ PICKED_UP $\rightarrow$ SERVED | **PASSED** |
+| `TEST 4` | **CASH COUNTER:** Bill generation $\rightarrow$ cash recording $\rightarrow$ GST invoice $\rightarrow$ table CLEANING $\rightarrow$ staff mark cleaned $\rightarrow$ AVAILABLE | **PASSED** |
+| `TEST 5` | **REFRESH & RECONNECTION:** Page reload and network reconnect recovers all pending calls and active orders | **PASSED** |
+| `TEST 6` | **SECURITY:** Multi-tenant restaurant isolation, staff role escalation prevention, and invalid QR token rejection | **PASSED** |
 
 ---
 
