@@ -1,17 +1,39 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://demo-resto-os.supabase.co';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'demo-anon-key-resto-os-production-ready';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim();
+const supabasePublishableKey = (
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+)?.trim();
 
-export const isLiveSupabaseConfigured = () => {
-  return (
-    supabaseUrl &&
-    !supabaseUrl.includes('your-project') &&
-    !supabaseUrl.includes('demo-resto-os') &&
-    supabaseAnonKey &&
-    !supabaseAnonKey.includes('your-anon-key') &&
-    !supabaseAnonKey.includes('demo-anon-key')
-  );
+const isValidSupabaseUrl = (value?: string): value is string => {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname.endsWith('.supabase.co');
+  } catch {
+    return false;
+  }
 };
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const isLiveSupabaseConfigured = (): boolean =>
+  isValidSupabaseUrl(supabaseUrl) &&
+  Boolean(supabasePublishableKey) &&
+  !supabasePublishableKey?.startsWith('your-') &&
+  !supabasePublishableKey?.startsWith('demo-');
+
+if (!isLiveSupabaseConfigured()) {
+  throw new Error(
+    'RESTO OS is not configured. Set VITE_SUPABASE_URL and ' +
+    'VITE_SUPABASE_PUBLISHABLE_KEY in the deployment environment. ' +
+    'Never use a Supabase service-role or secret key in the browser.'
+  );
+}
+
+export const supabase = createClient(supabaseUrl!, supabasePublishableKey!, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  },
+});
