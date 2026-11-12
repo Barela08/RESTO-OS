@@ -157,16 +157,16 @@ ON CONFLICT (id) DO NOTHING;
 
 -- 9. INVENTORY ITEMS & SUPPLIERS
 INSERT INTO suppliers (id, restaurant_id, name, contact_person, phone, email, address, is_active) VALUES
-('s0000001-0000-0000-0000-000000000001', 'rest-001-main', 'Metro Fresh Farms & Dairy', 'Sunil Gowda', '+91 98877 66554', 'orders@metrofresh.com', 'Yeshwanthpur APMC Yard', true),
-('s0000001-0000-0000-0000-000000000002', 'rest-001-main', 'Gourmet World Spices & Imports', 'Harish Nair', '+91 97766 55443', 'supply@gourmetworld.in', 'Electronic City Phase 1', true)
+('70000001-0000-0000-0000-000000000001', 'rest-001-main', 'Metro Fresh Farms & Dairy', 'Sunil Gowda', '+91 98877 66554', 'orders@metrofresh.com', 'Yeshwanthpur APMC Yard', true),
+('70000001-0000-0000-0000-000000000002', 'rest-001-main', 'Gourmet World Spices & Imports', 'Harish Nair', '+91 97766 55443', 'supply@gourmetworld.in', 'Electronic City Phase 1', true)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO inventory_items (id, restaurant_id, name, sku, unit, current_stock, min_stock_alert, cost_per_unit, supplier_id, is_active) VALUES
-('i0000001-0000-0000-0000-000000000001', 'rest-001-main', 'Fresh Organic Paneer', 'SKU-PAN-01', 'kg', 14.500, 5.000, 320.00, 's0000001-0000-0000-0000-000000000001', true),
-('i0000001-0000-0000-0000-000000000002', 'rest-001-main', 'Fresh Boneless Chicken Breast', 'SKU-CHK-01', 'kg', 22.000, 8.000, 240.00, 's0000001-0000-0000-0000-000000000001', true),
-('i0000001-0000-0000-0000-000000000003', 'rest-001-main', 'Buffalo Mozzarella Blocks', 'SKU-MOZ-01', 'kg', 8.200, 4.000, 580.00, 's0000001-0000-0000-0000-000000000001', true),
-('i0000001-0000-0000-0000-000000000004', 'rest-001-main', 'Single-Origin Arabica Beans', 'SKU-COF-01', 'kg', 6.000, 2.000, 850.00, 's0000001-0000-0000-0000-000000000002', true),
-('i0000001-0000-0000-0000-000000000005', 'rest-001-main', 'Callebaut 70% Dark Chocolate', 'SKU-CHO-01', 'kg', 12.000, 3.000, 1100.00, 's0000001-0000-0000-0000-000000000002', true)
+('80000001-0000-0000-0000-000000000001', 'rest-001-main', 'Fresh Organic Paneer', 'SKU-PAN-01', 'kg', 14.500, 5.000, 320.00, '70000001-0000-0000-0000-000000000001', true),
+('80000001-0000-0000-0000-000000000002', 'rest-001-main', 'Fresh Boneless Chicken Breast', 'SKU-CHK-01', 'kg', 22.000, 8.000, 240.00, '70000001-0000-0000-0000-000000000001', true),
+('80000001-0000-0000-0000-000000000003', 'rest-001-main', 'Buffalo Mozzarella Blocks', 'SKU-MOZ-01', 'kg', 8.200, 4.000, 580.00, '70000001-0000-0000-0000-000000000001', true),
+('80000001-0000-0000-0000-000000000004', 'rest-001-main', 'Single-Origin Arabica Beans', 'SKU-COF-01', 'kg', 6.000, 2.000, 850.00, '70000001-0000-0000-0000-000000000002', true),
+('80000001-0000-0000-0000-000000000005', 'rest-001-main', 'Callebaut 70% Dark Chocolate', 'SKU-CHO-01', 'kg', 12.000, 3.000, 1100.00, '70000001-0000-0000-0000-000000000002', true)
 ON CONFLICT (id) DO NOTHING;
 
 
@@ -191,7 +191,7 @@ INSERT INTO voice_settings (
 INSERT INTO loyalty_programs (
     id, restaurant_id, program_name, description, min_order_amount, stamps_per_order, stamps_required, reward_description, validity_days, is_active
 ) VALUES (
-    'l0000001-0000-0000-0000-000000000001', 'rest-001-main', 'Bistro Epicure Club',
+    '90000001-0000-0000-0000-000000000001', 'rest-001-main', 'Bistro Epicure Club',
     'Earn 1 stamp on every dining order above ₹250. Collect 8 stamps to unlock a Complimentary Gourmet Starter or Artisan Dessert!',
     250.00, 1, 8, 'Complimentary Gourmet Dessert or Craft Starter', 30, true
 ) ON CONFLICT (id) DO NOTHING;
@@ -200,15 +200,15 @@ INSERT INTO loyalty_programs (
 INSERT INTO shifts (
     id, restaurant_id, staff_id, shift_name, start_time, end_time, shift_date, status
 ) VALUES 
-('sh-0001-0000-0000-000000000001', 'rest-001-main', 'a0000001-0000-0000-0000-000000000003', 'Evening Dinner Shift', '16:00:00', '23:30:00', CURRENT_DATE, 'ACTIVE'),
-('sh-0001-0000-0000-000000000002', 'rest-001-main', 'a0000001-0000-0000-0000-000000000004', 'Dinner Line Shift', '15:30:00', '23:30:00', CURRENT_DATE, 'ACTIVE'),
-('sh-0001-0000-0000-000000000003', 'rest-001-main', 'a0000001-0000-0000-0000-000000000005', 'Evening Counter Shift', '16:00:00', '23:45:00', CURRENT_DATE, 'ACTIVE')
+('10000001-0000-0000-0000-000000000001', 'rest-001-main', 'a0000001-0000-0000-0000-000000000003', 'Evening Dinner Shift', '16:00:00', '23:30:00', CURRENT_DATE, 'ACTIVE'),
+('10000001-0000-0000-0000-000000000002', 'rest-001-main', 'a0000001-0000-0000-0000-000000000004', 'Dinner Line Shift', '15:30:00', '23:30:00', CURRENT_DATE, 'ACTIVE'),
+('10000001-0000-0000-0000-000000000003', 'rest-001-main', 'a0000001-0000-0000-0000-000000000005', 'Evening Counter Shift', '16:00:00', '23:45:00', CURRENT_DATE, 'ACTIVE')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO attendance (
     id, restaurant_id, staff_id, shift_id, check_in_time, status, notes
 ) VALUES
-('at-0001-0000-0000-000000000001', 'rest-001-main', 'a0000001-0000-0000-0000-000000000003', 'sh-0001-0000-0000-000000000001', NOW() - INTERVAL '3 hours', 'ON_TIME', 'Punched in via Staff Portal'),
-('at-0001-0000-0000-000000000002', 'rest-001-main', 'a0000001-0000-0000-0000-000000000004', 'sh-0001-0000-0000-000000000002', NOW() - INTERVAL '3 hours 30 minutes', 'ON_TIME', 'Punched in Kitchen line'),
-('at-0001-0000-0000-000000000003', 'rest-001-main', 'a0000001-0000-0000-0000-000000000005', 'sh-0001-0000-0000-000000000003', NOW() - INTERVAL '3 hours', 'ON_TIME', 'Punched at Cash Counter')
+(gen_random_uuid(), 'rest-001-main', 'a0000001-0000-0000-0000-000000000003', '10000001-0000-0000-000000000001', NOW() - INTERVAL '3 hours', 'ON_TIME', 'Punched in via Staff Portal'),
+(gen_random_uuid(), 'rest-001-main', 'a0000001-0000-0000-0000-000000000004', '10000001-0000-0000-000000000002', NOW() - INTERVAL '3 hours 30 minutes', 'ON_TIME', 'Punched in Kitchen line'),
+(gen_random_uuid(), 'rest-001-main', 'a0000001-0000-0000-0000-000000000005', '10000001-0000-0000-000000000003', NOW() - INTERVAL '3 hours', 'ON_TIME', 'Punched at Cash Counter')
 ON CONFLICT (id) DO NOTHING;

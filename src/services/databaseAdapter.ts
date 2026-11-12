@@ -58,6 +58,8 @@ import { QRService } from './qrService';
 import { audioService } from './audioService';
 import { voiceAnnouncementService } from './voiceAnnouncementService';
 import { getTodayDateString } from '../utils/date';
+import { supabase, isLiveSupabaseConfigured } from './supabase';
+import { EdgeFunctionsClient } from './edgeFunctionsClient';
 
 type Listener = () => void;
 
@@ -955,6 +957,25 @@ class DatabaseAdapter {
     audioService.playNewOrderChime();
     this.notify();
 
+    if (isLiveSupabaseConfigured() && typeof window !== 'undefined') {
+      EdgeFunctionsClient.createOrder({
+        restaurantId: this.restaurant.id,
+        tableSessionId: session.id,
+        sessionToken: session.session_token,
+        items: params.items.map(it => ({
+          menu_item_id: it.menuItemId,
+          quantity: it.quantity,
+          variant_id: it.variantId,
+          addon_ids: it.addonIds,
+          notes: it.specialInstructions,
+        })),
+        customerName: params.customerName || session.customer_name,
+        customerPhone: params.customerPhone || session.customer_phone,
+        specialNotes: params.specialNotes,
+        idempotencyKey: params.idempotencyKey,
+      }).then(() => {}, (err: any) => console.error('[RESTO Supabase] Async order sync warning:', err));
+    }
+
     return order;
   }
 
@@ -1015,6 +1036,25 @@ class DatabaseAdapter {
     }
 
     this.notify();
+
+    if (isLiveSupabaseConfigured() && typeof window !== 'undefined' && ticket.id.length === 36) {
+      supabase.from('kitchen_tickets').update({
+        status: newStatus,
+        rejection_reason: ticket.rejection_reason || null,
+        accepted_at: ticket.accepted_at || null,
+        prep_started_at: ticket.prep_started_at || null,
+        ready_at: ticket.ready_at || null,
+        handed_over_at: newStatus === 'HANDED_OVER' ? new Date().toISOString() : null,
+        updated_at: ticket.updated_at,
+      }).eq('id', ticket.id).then(() => {}, (err: any) => console.error('[RESTO Supabase] Kitchen ticket sync warning:', err));
+
+      if (order && order.id.length === 36) {
+        supabase.from('orders').update({
+          status: order.status,
+          updated_at: order.updated_at,
+        }).eq('id', order.id).then(() => {}, (err: any) => console.error('[RESTO Supabase] Order status sync warning:', err));
+      }
+    }
   }
 
   public markOrderServed(orderId: string) {
@@ -1023,6 +1063,13 @@ class DatabaseAdapter {
 
     order.status = 'SERVED';
     order.updated_at = new Date().toISOString();
+
+    if (isLiveSupabaseConfigured() && typeof window !== 'undefined' && order.id.length === 36) {
+      supabase.from('orders').update({
+        status: 'SERVED',
+        updated_at: order.updated_at,
+      }).eq('id', order.id).then(() => {}, (err: any) => console.error('[RESTO Supabase] Order served sync warning:', err));
+    }
 
     this.addNotification({
       recipient_role: 'counter',
@@ -1153,6 +1200,22 @@ class DatabaseAdapter {
     }
 
     this.notify();
+
+    if (isLiveSupabaseConfigured() && typeof window !== 'undefined') {
+      supabase.from('waiter_calls').insert({
+          restaurant_id: this.restaurant.id,
+          table_id: session.table_id,
+          table_session_id: session.id,
+          customer_name: session.customer_name || null,
+          customer_phone: session.customer_phone || null,
+          assigned_waiter_id: assignedWaiterId && assignedWaiterId.length === 36 ? assignedWaiterId : null,
+          request_type: params.requestType,
+          status: 'REQUESTED',
+          priority: params.priority || 'NORMAL',
+          notes: params.notes || null,
+        }).then(() => {}, (err: any) => console.error('[RESTO Supabase] Waiter call sync warning:', err));
+    }
+
     return call;
   }
 
@@ -1175,6 +1238,17 @@ class DatabaseAdapter {
     call.updated_at = nowIso;
 
     this.notify();
+
+    if (isLiveSupabaseConfigured() && typeof window !== 'undefined' && call.id.length === 36) {
+      supabase.from('waiter_calls').update({
+          status: 'ACCEPTED',
+          accepted_at: nowIso,
+          acknowledged_at: nowIso,
+          response_time_seconds: call.response_time_seconds,
+          updated_at: nowIso,
+        }).eq('id', call.id).then(() => {}, (err: any) => console.error(err));
+    }
+
     return call;
   }
 
@@ -1193,6 +1267,16 @@ class DatabaseAdapter {
     call.updated_at = nowIso;
 
     this.notify();
+
+    if (isLiveSupabaseConfigured() && typeof window !== 'undefined' && call.id.length === 36) {
+      supabase.from('waiter_calls').update({
+          status: 'ON_THE_WAY',
+          on_the_way_at: nowIso,
+          assigned_waiter_id: call.assigned_waiter_id && call.assigned_waiter_id.length === 36 ? call.assigned_waiter_id : null,
+          updated_at: nowIso,
+        }).eq('id', call.id).then(() => {}, (err: any) => console.error('[RESTO Supabase] Waiter call on the way sync warning:', err));
+    }
+
     return call;
   }
 
@@ -1211,6 +1295,16 @@ class DatabaseAdapter {
     call.updated_at = nowIso;
 
     this.notify();
+
+    if (isLiveSupabaseConfigured() && typeof window !== 'undefined' && call.id.length === 36) {
+      supabase.from('waiter_calls').update({
+          status: 'ARRIVED',
+          arrived_at: nowIso,
+          assigned_waiter_id: call.assigned_waiter_id && call.assigned_waiter_id.length === 36 ? call.assigned_waiter_id : null,
+          updated_at: nowIso,
+        }).eq('id', call.id).then(() => {}, (err: any) => console.error('[RESTO Supabase] Waiter call arrived sync warning:', err));
+    }
+
     return call;
   }
 
@@ -1229,6 +1323,15 @@ class DatabaseAdapter {
     call.updated_at = nowIso;
 
     this.notify();
+
+    if (isLiveSupabaseConfigured() && typeof window !== 'undefined' && call.id.length === 36) {
+      supabase.from('waiter_calls').update({
+          status: 'COMPLETED',
+          completed_at: nowIso,
+          updated_at: nowIso,
+        }).eq('id', call.id).then(() => {}, (err: any) => console.error(err));
+    }
+
     return call;
   }
 
@@ -1239,6 +1342,14 @@ class DatabaseAdapter {
     call.status = 'CANCELLED';
     call.updated_at = new Date().toISOString();
     this.notify();
+
+    if (isLiveSupabaseConfigured() && typeof window !== 'undefined' && call.id.length === 36) {
+      supabase.from('waiter_calls').update({
+          status: 'CANCELLED',
+          updated_at: call.updated_at,
+        }).eq('id', call.id).then(() => {}, (err: any) => console.error('[RESTO Supabase] Waiter call cancel sync warning:', err));
+    }
+
     return call;
   }
 
@@ -1459,6 +1570,24 @@ class DatabaseAdapter {
     }
 
     this.notify();
+
+    if (isLiveSupabaseConfigured() && typeof window !== 'undefined' && session.id.length === 36) {
+      supabase.from('payments').insert({
+        restaurant_id: this.restaurant.id,
+        table_session_id: session.id,
+        table_id: session.table_id,
+        order_id: tableOrders[0]?.id && tableOrders[0]?.id.length === 36 ? tableOrders[0].id : null,
+        amount: payment.amount,
+        payment_method: params.method,
+        payment_status: payment.payment_status,
+        gateway_order_id: payment.gateway_order_id || null,
+      }).select().then((res: any) => {
+        if (res?.data && res.data[0]) {
+          payment.id = res.data[0].id;
+        }
+      }, (err: any) => console.error('[RESTO Supabase] Payment insert warning:', err));
+    }
+
     return payment;
   }
 
@@ -1567,6 +1696,42 @@ class DatabaseAdapter {
       amount: payment.amount,
       method: payment.payment_method,
     });
+
+    if (isLiveSupabaseConfigured() && typeof window !== 'undefined') {
+      if (payment.id && payment.id.length === 36) {
+        supabase.from('payments').update({
+          payment_status: 'PAID',
+          confirmed_by_staff_id: params.staffId && params.staffId.length === 36 ? params.staffId : null,
+          confirmed_at: payment.confirmed_at,
+          cash_received_amount: payment.cash_received_amount || null,
+          cash_change_amount: payment.cash_change_amount || null,
+          updated_at: new Date().toISOString(),
+        }).eq('id', payment.id).then(() => {}, (err: any) => console.error('[RESTO Supabase] Payment update warning:', err));
+      }
+
+      if (table && table.id.length === 36) {
+        supabase.from('restaurant_tables').update({
+          status: 'CLEANING',
+          updated_at: table.updated_at,
+        }).eq('id', table.id).then(() => {}, (err: any) => console.error('[RESTO Supabase] Table cleaning update warning:', err));
+      }
+
+      if (session && session.id.length === 36) {
+        supabase.from('table_sessions').update({
+          status: 'CLOSED',
+          closed_at: session.closed_at,
+        }).eq('id', session.id).then(() => {}, (err: any) => console.error('[RESTO Supabase] Table session close warning:', err));
+      }
+
+      sessionOrders.forEach(o => {
+        if (o.id && o.id.length === 36) {
+          supabase.from('orders').update({
+            status: 'COMPLETED',
+            updated_at: o.updated_at,
+          }).eq('id', o.id).then(() => {}, (err: any) => console.error('[RESTO Supabase] Order completed warning:', err));
+        }
+      });
+    }
 
     this.notify();
     return { invoice, stampAwarded };
@@ -2472,6 +2637,10 @@ class DatabaseAdapter {
     return this.qrTokens.find(t => t.table_id === tableId && t.is_permanent && !t.is_revoked);
   }
 
+  public getPermanentQR(tableId: string): TableQRToken | undefined {
+    return this.getPermanentQRForTable(tableId);
+  }
+
   public generatePermanentQRForTable(tableId: string): TableQRToken {
     const table = this.tables.find(t => t.id === tableId);
     if (!table) throw new Error('Table not found');
@@ -3098,6 +3267,10 @@ class DatabaseAdapter {
     return this.securityAuditEvents;
   }
 
+  public getSecurityAuditLogs(callerRole?: StaffRoleType): SecurityAuditEvent[] {
+    return this.getSecurityAuditEvents(callerRole || 'admin');
+  }
+
   public resetRateLimit(identifier: string) {
     const clean = identifier.trim().toLowerCase();
     const profile = this.profiles.find(
@@ -3133,6 +3306,13 @@ class DatabaseAdapter {
     if (!tbl) return;
     Object.assign(tbl, updates, { updated_at: new Date().toISOString() });
     this.notify();
+
+    if (isLiveSupabaseConfigured() && typeof window !== 'undefined' && id.length === 36) {
+      supabase.from('restaurant_tables').update({
+        ...updates,
+        updated_at: tbl.updated_at,
+      }).eq('id', id).then(() => {}, (err: any) => console.error('[RESTO Supabase] Table update warning:', err));
+    }
   }
 
   public assignWaiterToTable(id: string, waiterId: string) {
@@ -3146,6 +3326,14 @@ class DatabaseAdapter {
     table.status = 'AVAILABLE';
     table.updated_at = new Date().toISOString();
     this.notify();
+
+    if (isLiveSupabaseConfigured() && typeof window !== 'undefined' && tableId.length === 36) {
+      supabase.from('restaurant_tables').update({
+        status: 'AVAILABLE',
+        updated_at: table.updated_at,
+      }).eq('id', tableId).then(() => {}, (err: any) => console.error('[RESTO Supabase] Table cleaned warning:', err));
+    }
+
     return table;
   }
 

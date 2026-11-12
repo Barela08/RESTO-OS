@@ -5,6 +5,7 @@
 
 -- 1. Upgrade profiles table for staff account authentication & lockout protection
 ALTER TABLE profiles
+    ADD COLUMN IF NOT EXISTS role VARCHAR(50) DEFAULT 'waiter',
     ADD COLUMN IF NOT EXISTS username VARCHAR(100) UNIQUE,
     ADD COLUMN IF NOT EXISTS password_hash TEXT,
     ADD COLUMN IF NOT EXISTS employee_id VARCHAR(50),
@@ -27,7 +28,7 @@ END $$;
 -- 2. Create Security Audit Logs table
 CREATE TABLE IF NOT EXISTS security_audit_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    restaurant_id UUID REFERENCES restaurants(id) ON DELETE CASCADE,
+    restaurant_id VARCHAR(64) REFERENCES restaurants(id) ON DELETE CASCADE,
     event_type VARCHAR(60) NOT NULL,
     user_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
     username VARCHAR(100),

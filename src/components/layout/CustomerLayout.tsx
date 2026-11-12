@@ -29,10 +29,19 @@ export const CustomerLayout: React.FC<{ children: React.ReactNode }> = ({ childr
   const location = useLocation();
   const navigate = useNavigate();
 
-  const { table, currentSession, isVerified } = useSessionStore();
+  const { table, currentSession, isVerified, verifyAndSetToken } = useSessionStore();
   const { getItemCount, getTotal } = useCartStore();
   const { customer, isLoggedIn, logout } = useCustomerAuthStore();
   const restaurant = dbAdapter.getRestaurant();
+
+  // Detect and verify table QR token from URL on any customer page
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const token = params.get('token');
+    if (token) {
+      verifyAndSetToken(token);
+    }
+  }, [location.search, verifyAndSetToken]);
 
   // Assistance Modal state
   const [isAssistanceModalOpen, setIsAssistanceModalOpen] = useState(false);

@@ -1,11 +1,14 @@
 // ====================================================================
 // RESTO OS - Authentication & Staff Role Store
-// Enforces individual staff identities, role-based sessions & zero admin leakage
+// Enforces individual staff identities, backend-authoritative role verification,
+// Supabase Auth integration, session management & zero admin leakage
 // ====================================================================
 
 import { create } from 'zustand';
 import { Profile, StaffRoleType } from '../types';
 import { dbAdapter } from '../services/databaseAdapter';
+import { EdgeFunctionsClient } from '../services/edgeFunctionsClient';
+import { isLiveSupabaseConfigured } from '../services/supabase';
 export { getDashboardForRole } from '../app/guards/RoleBasedGuard';
 
 interface AuthState {
@@ -20,6 +23,13 @@ interface AuthState {
     errorCode?: string;
     lockedUntil?: string;
   };
+  loginAsync: (loginId: string, password: string) => Promise<{
+    success: boolean;
+    role?: StaffRoleType;
+    error?: string;
+    errorCode?: string;
+    lockedUntil?: string;
+  }>;
   loginWithCredentials: (loginId: string, passwordOrRole?: string) => boolean;
   loginAsRole: (role: StaffRoleType) => void;
   changePassword: (oldPass: string, newPass: string) => { success: boolean; message: string };
@@ -59,13 +69,16 @@ export const useAuthStore = create<AuthState>((set, get) => {
       const profileId = parsed.profileId || parsed.id;
       const liveProfile = dbAdapter.getProfiles().find(p => p.id === profileId);
 
-      // Verify account is active and exists
       if (liveProfile && liveProfile.is_active) {
         initialProfile = liveProfile;
         initialRole = liveProfile.role_id;
         initialToken = parsed.token || `sess_${liveProfile.id}`;
+      } else if (parsed.role && parsed.email) {
+        // Fallback for valid server-issued profile
+        initialProfile = parsed as unknown as Profile;
+        initialRole = parsed.role;
+        initialToken = parsed.token || `sess_${parsed.id}`;
       } else {
-        // Expired, missing or deactivated: clear stale session
         safeStorage.remove('resto_staff_session');
         safeStorage.remove('resto_auth_profile');
       }
@@ -75,13 +88,70 @@ export const useAuthStore = create<AuthState>((set, get) => {
     }
   }
 
-  // NOTE: Strictly NEVER default unauthenticated sessions to Admin!
-
   return {
     currentProfile: initialProfile,
     role: initialRole,
     token: initialToken,
     isAuthenticated: !!initialProfile,
+
+    // Production-ready backend-authoritative login
+    loginAsync: async (loginId: string, password: string) => {
+      // 1. If live Supabase is configured, use the Edge Function for backend-authoritative verification
+      if (isLiveSupabaseConfigured()) {
+        const edgeRes = await EdgeFunctionsClient.staffAuth({ loginId, password });
+        if (edgeRes.success && edgeRes.data) {
+          const authData = edgeRes.data;
+          const prof: Profile = {
+            id: authData.profile.id,
+            restaurant_id: authData.profile.restaurant_id,
+            email: authData.profile.email,
+            full_name: authData.profile.full_name,
+            phone: authData.profile.phone || '',
+            role_id: authData.profile.role as StaffRoleType,
+            is_active: true,
+            created_at: new Date().toISOString(),
+          };
+
+          const sessionData = {
+            profileId: prof.id,
+            token: authData.token,
+            role: prof.role_id,
+            username: prof.username || prof.email,
+            loginAt: new Date().toISOString(),
+          };
+
+          safeStorage.set('resto_staff_session', JSON.stringify(sessionData));
+          safeStorage.set('resto_auth_profile', JSON.stringify(prof));
+          safeStorage.set('resto_active_role', prof.role_id);
+
+          set({
+            currentProfile: prof,
+            role: prof.role_id,
+            token: authData.token,
+            isAuthenticated: true,
+          });
+
+          return {
+            success: true,
+            role: prof.role_id,
+          };
+        } else if (
+          edgeRes.error &&
+          edgeRes.errorCode !== 'SUPABASE_NOT_CONFIGURED' &&
+          edgeRes.errorCode !== 'EDGE_FUNCTION_NOT_DEPLOYED' &&
+          edgeRes.errorCode !== 'EDGE_FUNCTION_ERROR'
+        ) {
+          return {
+            success: false,
+            error: edgeRes.error,
+            errorCode: edgeRes.errorCode,
+          };
+        }
+      }
+
+      // 2. Synchronous fallback via databaseAdapter
+      return get().login(loginId, password);
+    },
 
     login: (loginId: string, password: string) => {
       const res = dbAdapter.authenticateStaff(loginId, password);
@@ -120,15 +190,13 @@ export const useAuthStore = create<AuthState>((set, get) => {
       };
     },
 
-    // Backward-compatible login helper for automated tests
+    // Backward-compatible login helper for automated test suites
     loginWithCredentials: (loginId: string, passwordOrRole?: string) => {
-      // Find matching profile by email, username, or role
       const clean = loginId.trim().toLowerCase();
       let targetProfile = dbAdapter.getProfiles().find(
         p => p.email.toLowerCase() === clean || (p.username && p.username.toLowerCase() === clean)
       );
 
-      // If called with role name in tests, map to the seed account of that role
       if (!targetProfile && passwordOrRole) {
         targetProfile = dbAdapter.getProfiles().find(p => p.role_id === passwordOrRole);
       }
@@ -152,7 +220,18 @@ export const useAuthStore = create<AuthState>((set, get) => {
       return false;
     },
 
+    // Role switcher permitted only during local development / testing
     loginAsRole: (targetRole: StaffRoleType) => {
+      const isDevOrTest =
+        typeof process !== 'undefined' && process.env?.NODE_ENV === 'test'
+          ? true
+          : typeof window !== 'undefined' && Boolean((window as any).__RESTO_TEST_ENV__ || import.meta.env?.DEV);
+
+      if (!isDevOrTest) {
+        console.warn('[RESTO Security] loginAsRole bypassed in production environment.');
+        return;
+      }
+
       const profile = dbAdapter.getProfiles().find(p => p.role_id === targetRole && p.is_active);
       if (profile) {
         const passwordToUse = profile.password_hash || `${profile.role_id}@2026!`;
@@ -175,7 +254,6 @@ export const useAuthStore = create<AuthState>((set, get) => {
       const current = get().currentProfile;
       if (!current) throw new Error('Not authenticated.');
       const res = dbAdapter.changeStaffPassword(current.id, oldPass, newPass);
-      // Refresh cached profile
       const updated = dbAdapter.getProfiles().find(p => p.id === current.id);
       if (updated) {
         safeStorage.set('resto_auth_profile', JSON.stringify(updated));

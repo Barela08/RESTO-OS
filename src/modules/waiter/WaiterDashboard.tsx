@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useAuthStore } from '../../store/authStore';
 import { dbAdapter } from '../../services/databaseAdapter';
 import { audioService } from '../../services/audioService';
 import { voiceAnnouncementService } from '../../services/voiceAnnouncementService';
@@ -46,8 +47,9 @@ export const WaiterDashboard: React.FC = () => {
   const [waiterCalls, setWaiterCalls] = useState<WaiterCall[]>([]);
   const [readyTickets, setReadyTickets] = useState<KitchenTicket[]>([]);
 
-  // Current logged in waiter
-  const currentWaiterId = 'st-wtr-1';
+  // Current authenticated waiter identity
+  const { currentProfile } = useAuthStore();
+  const currentWaiterId = currentProfile?.id || 'st-wtr-1';
 
   // Navigation & Filtering State
   const [activeTab, setActiveTab] = useState<'ALL' | 'FOOD_TABLES' | 'READY_AT_PASS' | 'SERVICE_CALLS' | 'REWARDS'>('ALL');

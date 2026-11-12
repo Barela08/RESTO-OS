@@ -19,7 +19,7 @@ import { getDashboardForRole } from '../../app/guards/RoleBasedGuard';
 export const StaffLoginPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login } = useAuthStore();
+  const { login, loginAsync } = useAuthStore();
 
   const [loginId, setLoginId] = useState('');
   const [password, setPassword] = useState('');
@@ -46,7 +46,7 @@ export const StaffLoginPage: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const result = login(loginId.trim(), password);
+      const result = await loginAsync(loginId.trim(), password);
 
       if (!result.success || !result.role) {
         setErrorMessage(result.error || 'Invalid login credentials.');
@@ -198,90 +198,92 @@ export const StaffLoginPage: React.FC = () => {
           <span className="font-mono text-[10px]">Brute-Force Protected</span>
         </div>
 
-        {/* Evaluator Helper Accordion */}
-        <div className="mt-4 pt-3 border-t border-slate-800/60">
-          <button
-            type="button"
-            onClick={() => setShowDemoAccounts(!showDemoAccounts)}
-            className="w-full flex items-center justify-between text-[11px] text-slate-400 hover:text-slate-200 transition-colors py-1"
-          >
-            <span className="flex items-center gap-1.5 font-bold">
-              <KeyRound className="w-3.5 h-3.5 text-amber-400" />
-              <span>Staff Accounts & Credentials Guide</span>
-            </span>
-            <span className="text-xs">{showDemoAccounts ? '▲ Hide' : '▼ View'}</span>
-          </button>
+        {/* Development Evaluator Helper Accordion (hidden in production) */}
+        {import.meta.env.DEV && (
+          <div className="mt-4 pt-3 border-t border-slate-800/60">
+            <button
+              type="button"
+              onClick={() => setShowDemoAccounts(!showDemoAccounts)}
+              className="w-full flex items-center justify-between text-[11px] text-slate-400 hover:text-slate-200 transition-colors py-1"
+            >
+              <span className="flex items-center gap-1.5 font-bold">
+                <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                <span>Development Credentials Guide</span>
+              </span>
+              <span className="text-xs">{showDemoAccounts ? '▲ Hide' : '▼ View'}</span>
+            </button>
 
-          {showDemoAccounts && (
-            <div className="mt-2.5 p-3 bg-slate-900/90 border border-slate-800 rounded-2xl space-y-2 text-[11px]">
-              <p className="text-slate-400 text-[10px] font-medium mb-1.5">
-                Every staff role has its own distinct credentials and automated terminal redirection:
-              </p>
+            {showDemoAccounts && (
+              <div className="mt-2.5 p-3 bg-slate-900/90 border border-slate-800 rounded-2xl space-y-2 text-[11px]">
+                <p className="text-slate-400 text-[10px] font-medium mb-1.5">
+                  Development test credentials with automated terminal redirection:
+                </p>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => handleFillDemo('counter', 'Counter@2026!')}
-                  className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700/80 text-left border border-slate-700/60 flex items-center justify-between transition-all"
-                >
-                  <div>
-                    <p className="font-bold text-white text-xs">Cash Counter</p>
-                    <p className="text-[10px] text-slate-400 font-mono">counter / Counter@2026!</p>
-                  </div>
-                  <span className="text-[10px] font-bold text-green-400">POS</span>
-                </button>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => handleFillDemo('counter', 'Counter@2026!')}
+                    className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700/80 text-left border border-slate-700/60 flex items-center justify-between transition-all"
+                  >
+                    <div>
+                      <p className="font-bold text-white text-xs">Cash Counter</p>
+                      <p className="text-[10px] text-slate-400 font-mono">counter / Counter@2026!</p>
+                    </div>
+                    <span className="text-[10px] font-bold text-green-400">POS</span>
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => handleFillDemo('waiter', 'Waiter@2026!')}
-                  className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700/80 text-left border border-slate-700/60 flex items-center justify-between transition-all"
-                >
-                  <div>
-                    <p className="font-bold text-white text-xs">Waiter Terminal</p>
-                    <p className="text-[10px] text-slate-400 font-mono">waiter / Waiter@2026!</p>
-                  </div>
-                  <span className="text-[10px] font-bold text-blue-400">Floor</span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => handleFillDemo('waiter', 'Waiter@2026!')}
+                    className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700/80 text-left border border-slate-700/60 flex items-center justify-between transition-all"
+                  >
+                    <div>
+                      <p className="font-bold text-white text-xs">Waiter Terminal</p>
+                      <p className="text-[10px] text-slate-400 font-mono">waiter / Waiter@2026!</p>
+                    </div>
+                    <span className="text-[10px] font-bold text-blue-400">Floor</span>
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => handleFillDemo('kitchen', 'Kitchen@2026!')}
-                  className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700/80 text-left border border-slate-700/60 flex items-center justify-between transition-all"
-                >
-                  <div>
-                    <p className="font-bold text-white text-xs">Kitchen KDS</p>
-                    <p className="text-[10px] text-slate-400 font-mono">kitchen / Kitchen@2026!</p>
-                  </div>
-                  <span className="text-[10px] font-bold text-orange-400">KDS</span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => handleFillDemo('kitchen', 'Kitchen@2026!')}
+                    className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700/80 text-left border border-slate-700/60 flex items-center justify-between transition-all"
+                  >
+                    <div>
+                      <p className="font-bold text-white text-xs">Kitchen KDS</p>
+                      <p className="text-[10px] text-slate-400 font-mono">kitchen / Kitchen@2026!</p>
+                    </div>
+                    <span className="text-[10px] font-bold text-orange-400">KDS</span>
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => handleFillDemo('admin', 'Admin@2026!')}
-                  className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700/80 text-left border border-slate-700/60 flex items-center justify-between transition-all"
-                >
-                  <div>
-                    <p className="font-bold text-white text-xs">Administrator</p>
-                    <p className="text-[10px] text-slate-400 font-mono">admin / Admin@2026!</p>
-                  </div>
-                  <span className="text-[10px] font-bold text-purple-400">Admin</span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => handleFillDemo('admin', 'Admin@2026!')}
+                    className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700/80 text-left border border-slate-700/60 flex items-center justify-between transition-all"
+                  >
+                    <div>
+                      <p className="font-bold text-white text-xs">Administrator</p>
+                      <p className="text-[10px] text-slate-400 font-mono">admin / Admin@2026!</p>
+                    </div>
+                    <span className="text-[10px] font-bold text-purple-400">Admin</span>
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => handleFillDemo('owner', 'Owner@2026!')}
-                  className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700/80 text-left border border-slate-700/60 flex items-center justify-between transition-all col-span-1 sm:col-span-2"
-                >
-                  <div>
-                    <p className="font-bold text-white text-xs">Owner Executive</p>
-                    <p className="text-[10px] text-slate-400 font-mono">owner / Owner@2026!</p>
-                  </div>
-                  <span className="text-[10px] font-bold text-amber-400">Executive</span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => handleFillDemo('owner', 'Owner@2026!')}
+                    className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700/80 text-left border border-slate-700/60 flex items-center justify-between transition-all col-span-1 sm:col-span-2"
+                  >
+                    <div>
+                      <p className="font-bold text-white text-xs">Owner Executive</p>
+                      <p className="text-[10px] text-slate-400 font-mono">owner / Owner@2026!</p>
+                    </div>
+                    <span className="text-[10px] font-bold text-amber-400">Executive</span>
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
