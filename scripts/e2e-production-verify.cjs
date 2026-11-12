@@ -1,17 +1,14 @@
 const ws = require('ws');
 global.WebSocket = ws;
 const { createClient } = require('@supabase/supabase-js');
-const pg = require('pg');
+const { executeSql } = require('./query-helper.cjs');
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'https://mklcrcyubohgfosgxmrm.supabase.co';
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_7lji58Dx7rNxfkuAi4Diew_RZk-8Yn6';
-const DB_URL = process.env.DATABASE_URL || 'postgresql://postgres:@db.mklcrcyubohgfosgxmrm.supabase.co:5432/postgres';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: false },
 });
-
-const pool = new pg.Pool({ connectionString: DB_URL });
 
 async function runE2EVerification() {
   console.log('================================================================');
@@ -20,13 +17,15 @@ async function runE2EVerification() {
   console.log('================================================================\n');
 
   const results = [];
+  const TABLE_5_ID = 'c0000001-0000-0000-0000-000000000005';
+  const TABLE_5_TOKEN = '1e06f189a9d476549e1b232fe9b14f7730ce6861f801fa5657bf71e777e5bacb';
+  let activeSessionId = null;
 
   // TEST A: Table 5 Permanent QR Verification & Repeat Scan Resume
   try {
     console.log('[TEST A] Table 5 Permanent QR Verification & Repeat Scan');
-    const tokenHash = 'perm-rest-001-main-tbl-005-table-5';
     const { data: scanData, error: scanErr } = await supabase.rpc('verify_table_qr_token', {
-      p_token_hash: tokenHash,
+      p_token_hash: TABLE_5_TOKEN,
       p_ip_address: '127.0.0.1',
       p_user_agent: 'E2E-Automated-Tester/1.0',
     });
@@ -34,11 +33,12 @@ async function runE2EVerification() {
     if (scanErr) throw scanErr;
     if (!scanData || !scanData.success) throw new Error('RPC returned unsuccessful: ' + JSON.stringify(scanData));
 
+    activeSessionId = scanData.session_id;
     console.log('  ✓ Initial scan succeeded: Session ID =', scanData.session_id, 'Table Number =', scanData.table_number);
 
     // Repeat scan immediately
     const { data: repeatData, error: repeatErr } = await supabase.rpc('verify_table_qr_token', {
-      p_token_hash: tokenHash,
+      p_token_hash: TABLE_5_TOKEN,
       p_ip_address: '127.0.0.1',
       p_user_agent: 'E2E-Automated-Tester/1.0',
     });
@@ -58,27 +58,24 @@ async function runE2EVerification() {
   // TEST B: Customer Profile Restoration
   try {
     console.log('\n[TEST B] Customer Profile Restoration');
-    const client = await pool.connect();
-    try {
-      const res = await client.query(`
-        SELECT id, name, phone, email, loyalty_points, stamp_count
-        FROM customers
-        WHERE phone = '9876543210'
-        LIMIT 1;
+    const res = await executeSql(`
+      SELECT id, full_name, phone, email
+      FROM customers
+      WHERE phone = '9876543210'
+      LIMIT 1;
+    `);
+
+    if (res.rows.length === 0) {
+      await executeSql(`
+        INSERT INTO customers (id, restaurant_id, full_name, phone, email, is_phone_verified)
+        VALUES ('cust-e2e-demo', 'rest-001-main', 'Nilu Barela', '9876543210', 'nilu@test.com', true)
+        ON CONFLICT (phone) DO UPDATE SET full_name = EXCLUDED.full_name;
       `);
-      if (res.rows.length === 0) {
-        await client.query(`
-          INSERT INTO customers (id, restaurant_id, name, phone, email, stamp_count, loyalty_points, is_active)
-          VALUES ('cust-e2e-demo', 'rest-001-main', 'Nilu Barela', '9876543210', 'nilu@test.com', 4, 120, true)
-          ON CONFLICT (phone) DO UPDATE SET name = EXCLUDED.name;
-        `);
-      }
-      const cust = (await client.query(`SELECT id, name, phone, stamp_count FROM customers WHERE phone = '9876543210'`)).rows[0];
-      console.log('  ✓ Customer profile retrieved: Name =', cust.name, 'Phone =', cust.phone, 'Stamps =', cust.stamp_count);
-      results.push({ test: 'TEST B: Customer Profile Restoration', passed: true, details: `Verified customer ${cust.name} (${cust.phone})` });
-    } finally {
-      client.release();
     }
+
+    const cust = (await executeSql(`SELECT id, full_name, phone FROM customers WHERE phone = '9876543210'`)).rows[0];
+    console.log('  ✓ Customer profile retrieved: Name =', cust.full_name, 'Phone =', cust.phone);
+    results.push({ test: 'TEST B: Customer Profile Restoration', passed: true, details: `Verified customer ${cust.full_name} (${cust.phone})` });
   } catch (err) {
     console.error('  ✗ TEST B Failed:', err.message);
     results.push({ test: 'TEST B: Customer Profile Restoration', passed: false, error: err.message });
@@ -88,15 +85,15 @@ async function runE2EVerification() {
   try {
     console.log('\n[TEST C] Real Order Placement & Kitchen Display Synchronization');
     const orderNumber = 'ORD-E2E-' + Math.floor(1000 + Math.random() * 9000);
-    const subtotal = 400.00;
-    const cgst = 10.00; // 2.5%
-    const sgst = 10.00; // 2.5%
-    const total = 420.00;
+    const subtotal = 345.00;
+    const cgst = 8.63; // 2.5%
+    const sgst = 8.63; // 2.5%
+    const total = 362.26;
 
     const { data: orderData, error: orderErr } = await supabase.from('orders').insert({
       restaurant_id: 'rest-001-main',
-      table_id: 'tbl-005',
-      table_session_id: 'ses-tbl-005-initial',
+      table_id: TABLE_5_ID,
+      table_session_id: activeSessionId,
       order_number: orderNumber,
       status: 'PLACED',
       subtotal_amount: subtotal,
@@ -113,11 +110,11 @@ async function runE2EVerification() {
     // Insert order item
     const { error: itemErr } = await supabase.from('order_items').insert({
       order_id: orderData.id,
-      menu_item_id: 'item-001',
-      item_name: 'Butter Chicken Special',
-      quantity: 2,
-      unit_price: 200.00,
-      total_price: 400.00,
+      menu_item_id: 'e0000001-0000-0000-0000-000000000001',
+      item_name: 'Truffle Mushroom Bruschetta',
+      quantity: 1,
+      unit_price: 345.00,
+      total_price: 345.00,
     });
     if (itemErr) throw itemErr;
 
@@ -128,7 +125,7 @@ async function runE2EVerification() {
       order_id: orderData.id,
       ticket_number: ticketNumber,
       status: 'NEW',
-      station: 'CURRY_STATION',
+      station_id: null,
       table_number: '5',
     }).select().single();
     if (ticketErr) throw ticketErr;
@@ -145,8 +142,8 @@ async function runE2EVerification() {
     console.log('\n[TEST D] Waiter Call & Voice Synthesizer Table Speech Formatting');
     const { data: callData, error: callErr } = await supabase.from('waiter_calls').insert({
       restaurant_id: 'rest-001-main',
-      table_id: 'tbl-005',
-      table_session_id: 'ses-tbl-005-initial',
+      table_id: TABLE_5_ID,
+      table_session_id: activeSessionId,
       customer_name: 'Nilu Barela',
       customer_phone: '9876543210',
       request_type: 'WATER',
@@ -179,7 +176,7 @@ async function runE2EVerification() {
     let realtimeReceived = false;
 
     const testChannel = supabase
-      .channel('e2e-sync-verification')
+      .channel('e2e-sync-verification-' + Date.now())
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'waiter_calls' }, payload => {
         if (payload.new && payload.new.notes === 'Realtime sync test probe') {
           realtimeReceived = true;
@@ -193,8 +190,8 @@ async function runE2EVerification() {
     // Trigger insert
     await supabase.from('waiter_calls').insert({
       restaurant_id: 'rest-001-main',
-      table_id: 'tbl-005',
-      table_session_id: 'ses-tbl-005-initial',
+      table_id: TABLE_5_ID,
+      table_session_id: activeSessionId,
       request_type: 'OTHER',
       status: 'REQUESTED',
       priority: 'NORMAL',
@@ -226,9 +223,9 @@ async function runE2EVerification() {
     });
 
     if (rejectErr) throw rejectErr;
-    if (rejectData && rejectData.success === false && rejectData.message.includes('Invalid or expired')) {
+    if (rejectData && rejectData.success === false && rejectData.error_code === 'INVALID_TOKEN') {
       console.log('  ✓ Tampered QR token rejected cleanly with security message:', `"${rejectData.message}"`);
-      results.push({ test: 'TEST F: Tampered QR Rejection', passed: true, details: 'Rejected with security code' });
+      results.push({ test: 'TEST F: Tampered QR Rejection', passed: true, details: 'Rejected with security code INVALID_TOKEN' });
     } else {
       throw new Error('Tampered token was not rejected properly: ' + JSON.stringify(rejectData));
     }
@@ -268,35 +265,28 @@ async function runE2EVerification() {
   // TEST H: Cash Counter Settlement & Table Clearing
   try {
     console.log('\n[TEST H] Cash Counter Payment Settlement & Table Lifecycle');
-    const client = await pool.connect();
-    try {
-      // Create payment record
-      const payRes = await client.query(`
-        INSERT INTO payments (
-          restaurant_id, table_session_id, table_id, amount, payment_method, payment_status
-        ) VALUES (
-          'rest-001-main', 'ses-tbl-005-initial', 'tbl-005', 420.00, 'CASH', 'PAID'
-        ) RETURNING id, payment_status;
-      `);
-      console.log('  ✓ Payment settled as PAID: ID =', payRes.rows[0].id);
+    const payRes = await executeSql(`
+      INSERT INTO payments (
+        restaurant_id, table_session_id, table_id, amount, payment_method, payment_status
+      ) VALUES (
+        'rest-001-main', $1, $2, 362.26, 'CASH', 'PAID'
+      ) RETURNING id, payment_status;
+    `, [activeSessionId, TABLE_5_ID]);
+    console.log('  ✓ Payment settled as PAID: ID =', payRes.rows[0].id);
 
-      // Transition table to CLEANING then AVAILABLE
-      await client.query(`UPDATE restaurant_tables SET status = 'CLEANING', updated_at = NOW() WHERE id = 'tbl-005';`);
-      console.log('  ✓ Table tbl-005 updated to CLEANING');
+    // Transition table to CLEANING
+    await executeSql(`UPDATE restaurant_tables SET status = 'CLEANING', updated_at = NOW() WHERE id = $1;`, [TABLE_5_ID]);
+    console.log('  ✓ Table c0000001-0000-0000-0000-000000000005 updated to CLEANING');
 
-      await client.query(`UPDATE restaurant_tables SET status = 'AVAILABLE', updated_at = NOW() WHERE id = 'tbl-005';`);
-      console.log('  ✓ Table tbl-005 cleared and reset to AVAILABLE for new diners');
+    // Table cleaned and reset to AVAILABLE
+    await executeSql(`UPDATE restaurant_tables SET status = 'AVAILABLE', updated_at = NOW() WHERE id = $1;`, [TABLE_5_ID]);
+    console.log('  ✓ Table c0000001-0000-0000-0000-000000000005 cleared and reset to AVAILABLE for new diners');
 
-      results.push({ test: 'TEST H: Cash Settlement & Table Lifecycle', passed: true, details: 'Payment PAID -> Table CLEANING -> Table AVAILABLE' });
-    } finally {
-      client.release();
-    }
+    results.push({ test: 'TEST H: Cash Settlement & Table Lifecycle', passed: true, details: 'Payment PAID -> Table CLEANING -> Table AVAILABLE' });
   } catch (err) {
     console.error('  ✗ TEST H Failed:', err.message);
     results.push({ test: 'TEST H: Cash Settlement & Table Lifecycle', passed: false, error: err.message });
   }
-
-  await pool.end();
 
   console.log('\n================================================================');
   console.log('FINAL E2E VERIFICATION SUMMARY');
