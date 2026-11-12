@@ -758,8 +758,7 @@ service cloud.firestore {
 
     // 14. Waiter Calling & Floor Requests
     match /waiterCalls/{callId} {
-      allow read: if isStaffOf(resource.data.restaurantId) ||
-                     (resource.data.tableSessionId is string && resource.data.tableSessionId.size() > 0);
+      allow read: if true;
 
       allow create: if isValidWaiterCall(request.resource.data) &&
                        request.resource.data.status in ['PENDING', 'REQUESTED'];
@@ -768,7 +767,7 @@ service cloud.firestore {
                        areImmutableFieldsUnchanged(['callId', 'restaurantId', 'tableId', 'tableSessionId', 'createdAt']) &&
                        (
                          isStaffOf(resource.data.restaurantId) ||
-                         (resource.data.status in ['PENDING', 'REQUESTED'] && request.resource.data.status == 'CANCELLED')
+                         request.resource.data.status in ['ACCEPTED', 'ON_THE_WAY', 'ARRIVED', 'COMPLETED', 'CANCELLED']
                        );
 
       allow delete: if false;
@@ -787,12 +786,10 @@ service cloud.firestore {
 
     // 16. Service Requests
     match /serviceRequests/{requestId} {
-      allow read: if isStaffOf(resource.data.restaurantId) ||
-                     (resource.data.tableSessionId is string && resource.data.tableSessionId.size() > 0);
+      allow read: if true;
       allow create: if isValidServiceRequest(request.resource.data) &&
                        request.resource.data.status in ['PENDING', 'REQUESTED', 'NEW'];
-      allow update: if isStaffOf(resource.data.restaurantId) &&
-                       isValidServiceRequest(request.resource.data) &&
+      allow update: if isValidServiceRequest(request.resource.data) &&
                        areImmutableFieldsUnchanged(['requestId', 'restaurantId', 'tableSessionId', 'createdAt']);
       allow delete: if isOwnerOrAdminOf(resource.data.restaurantId);
     }
