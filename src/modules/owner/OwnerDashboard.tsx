@@ -31,9 +31,13 @@ export const OwnerDashboard: React.FC = () => {
   const [items, setItems] = useState(dbAdapter.getMenuItems());
 
   useEffect(() => {
-    setPayments([...dbAdapter.getPayments()]);
-    setOrders([...dbAdapter.getOrders()]);
-    setItems([...dbAdapter.getMenuItems()]);
+    const updateMetrics = () => {
+      setPayments([...dbAdapter.getPayments()]);
+      setOrders([...dbAdapter.getOrders()]);
+      setItems([...dbAdapter.getMenuItems()]);
+    };
+    updateMetrics();
+    return dbAdapter.subscribe(updateMetrics);
   }, []);
 
   const paidPayments = payments.filter(p => p.payment_status === 'PAID');
@@ -44,29 +48,55 @@ export const OwnerDashboard: React.FC = () => {
   const netProfit = netSales - estimatedExpenses;
 
   const totalCompletedOrders = orders.filter(o => o.status === 'COMPLETED' || o.status === 'SERVED').length;
-  const aov = totalCompletedOrders > 0 ? grossSales / totalCompletedOrders : 650;
+  const aov = totalCompletedOrders > 0 ? grossSales / totalCompletedOrders : (grossSales > 0 ? grossSales / orders.length : 0);
 
-  // Hourly ordering data
-  const hourlyData = [
-    { time: '12 PM', orders: 8, sales: 3400 },
-    { time: '1 PM', orders: 18, sales: 8200 },
-    { time: '2 PM', orders: 14, sales: 6100 },
-    { time: '3 PM', orders: 5, sales: 1800 },
-    { time: '4 PM', orders: 4, sales: 1200 },
-    { time: '7 PM', orders: 16, sales: 7400 },
-    { time: '8 PM', orders: 24, sales: 11800 },
-    { time: '9 PM', orders: 20, sales: 9400 },
-    { time: '10 PM', orders: 10, sales: 4200 },
+  // Authoritative hourly ordering data derived from live orders
+  const hourlySlots = [
+    { label: '12 PM', hour: 12 },
+    { label: '1 PM', hour: 13 },
+    { label: '2 PM', hour: 14 },
+    { label: '3 PM', hour: 15 },
+    { label: '4 PM', hour: 16 },
+    { label: '7 PM', hour: 19 },
+    { label: '8 PM', hour: 20 },
+    { label: '9 PM', hour: 21 },
+    { label: '10 PM', hour: 22 },
   ];
 
-  // Top Selling Dishes
-  const topDishes = [
-    { name: 'Old Delhi Butter Chicken', sales: 48, revenue: 23760 },
-    { name: 'Artisan Margherita Pizza', sales: 42, revenue: 18690 },
-    { name: 'Dum Gosht Biryani', sales: 36, revenue: 20160 },
-    { name: 'Truffle Mushroom Bruschetta', sales: 31, revenue: 10695 },
-    { name: 'Belgian Dark Chocolate Lava', sales: 29, revenue: 8555 },
-  ];
+  const hourlyData = hourlySlots.map(slot => {
+    const slotOrders = orders.filter(o => {
+      const orderDate = new Date(o.created_at);
+      return orderDate.getHours() === slot.hour;
+    });
+    const slotSales = slotOrders.reduce((sum, o) => sum + o.total_amount, 0);
+    return {
+      time: slot.label,
+      orders: slotOrders.length,
+      sales: Math.round(slotSales),
+    };
+  });
+
+  // Authoritative top selling dishes derived from actual order items
+  const dishSalesMap = new Map<string, { name: string; sales: number; revenue: number }>();
+  orders.forEach(order => {
+    (order.items || []).forEach(item => {
+      const existing = dishSalesMap.get(item.item_name) || { name: item.item_name, sales: 0, revenue: 0 };
+      existing.sales += item.quantity;
+      existing.revenue += item.total_price || (item.unit_price * item.quantity);
+      dishSalesMap.set(item.item_name, existing);
+    });
+  });
+
+  const topDishes = Array.from(dishSalesMap.values())
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 5);
+
+  // Fallback to top menu catalog items if no live dish orders yet
+  if (topDishes.length === 0) {
+    items.slice(0, 5).forEach(m => {
+      topDishes.push({ name: m.name, sales: 0, revenue: 0 });
+    });
+  }
 
   return (
     <AdminLayout>

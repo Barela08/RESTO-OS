@@ -13,6 +13,7 @@ import {
   where,
   orderBy,
   onSnapshot,
+  updateDoc,
   writeBatch,
   serverTimestamp,
   Unsubscribe,
@@ -26,18 +27,24 @@ import {
 import { OrderStatus, KitchenTicketStatus } from '../../types';
 import { rtdbPresenceService } from './rtdbPresenceService';
 
+export interface CreateOrderItemInput {
+  menuItemId: string;
+  variantId?: string;
+  addonIds?: string[];
+  quantity: number;
+  specialInstructions?: string;
+  name?: string;
+  basePrice?: number;
+  isAvailable?: boolean;
+  kitchenStationId?: string;
+}
+
 export interface CreateOrderInput {
   restaurantId: string;
   tableSessionId: string;
   tableId: string;
   tableNumber: string;
-  items: {
-    menuItemId: string;
-    variantId?: string;
-    addonIds?: string[];
-    quantity: number;
-    specialInstructions?: string;
-  }[];
+  items: CreateOrderItemInput[];
   customerPhone?: string;
   customerName?: string;
   specialNotes?: string;
@@ -95,7 +102,16 @@ export class OrderRepository {
 
     for (let idx = 0; idx < input.items.length; idx++) {
       const entry = input.items[idx];
-      const menuItem = itemMap.get(entry.menuItemId);
+      let menuItem = itemMap.get(entry.menuItemId);
+      if (!menuItem && entry.name && typeof entry.basePrice === 'number') {
+        // Fallback to verified catalog values if item not yet seeded into Firestore
+        menuItem = {
+          name: entry.name,
+          basePrice: entry.basePrice,
+          isAvailable: entry.isAvailable ?? true,
+          kitchenStationId: entry.kitchenStationId || 'sta-main',
+        };
+      }
       if (!menuItem) {
         throw new Error(`Menu item not found: ${entry.menuItemId}`);
       }
@@ -117,14 +133,13 @@ export class OrderRepository {
       // Addons total
       let addonsTotal = 0;
       const appliedAddons: { id: string; name: string; price: number }[] = [];
-      // (Addons can be populated from menuItem config or global addons)
 
       const unitPrice = (menuItem.basePrice || 0) + variantDelta + addonsTotal;
       const itemTotal = unitPrice * entry.quantity;
       subtotal += itemTotal;
 
       const orderItemId = `oi-${orderId}-${idx + 1}`;
-      const stationId = menuItem.kitchenStationId || 'sta-main';
+      const stationId = menuItem.kitchenStationId || entry.kitchenStationId || 'sta-main';
 
       const orderItem: FirestoreOrderItem = {
         orderItemId,
@@ -132,8 +147,8 @@ export class OrderRepository {
         restaurantId: input.restaurantId,
         menuItemId: menuItem.itemId || entry.menuItemId,
         itemName: menuItem.name,
-        variantId: entry.variantId,
-        variantName,
+        variantId: entry.variantId || null,
+        variantName: variantName || null,
         addons: appliedAddons,
         unitPrice,
         quantity: entry.quantity,
@@ -163,8 +178,8 @@ export class OrderRepository {
       tableSessionId: input.tableSessionId,
       tableId: input.tableId,
       tableNumber: input.tableNumber,
-      customerPhone: input.customerPhone,
-      customerName: input.customerName,
+      customerPhone: input.customerPhone || null,
+      customerName: input.customerName || null,
       status: 'PLACED',
       paymentStatus: 'UNPAID',
       itemCount: input.items.reduce((sum, i) => sum + i.quantity, 0),
@@ -173,8 +188,8 @@ export class OrderRepository {
       sgstAmount,
       discountAmount,
       totalAmount,
-      specialNotes: input.specialNotes,
-      idempotencyKey: input.idempotencyKey,
+      specialNotes: input.specialNotes || null,
+      idempotencyKey: input.idempotencyKey || null,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     };
@@ -344,5 +359,91 @@ export class OrderRepository {
       );
       callback(tickets);
     });
+  }
+
+  /**
+   * Update a kitchen ticket status and automatically update parent order lifecycle
+   */
+  public static async updateKitchenTicketStatus(
+    restaurantId: string,
+    ticketId: string,
+    newStatus: KitchenTicketStatus,
+    rejectionReason?: string
+  ): Promise<void> {
+    if (!db) return;
+
+    const ticketRef = doc(db, 'kitchenTickets', ticketId);
+    const ticketSnap = await getDoc(ticketRef);
+    if (!ticketSnap.exists()) return;
+
+    const ticketData = ticketSnap.data();
+    const orderId = ticketData.orderId;
+    const tableNumber = ticketData.tableNumber;
+
+    const updatePayload: Record<string, any> = {
+      status: newStatus,
+      updatedAt: serverTimestamp(),
+    };
+
+    if (newStatus === 'ACCEPTED') {
+      updatePayload.acceptedAt = serverTimestamp();
+    } else if (newStatus === 'PREPARING') {
+      updatePayload.prepStartedAt = serverTimestamp();
+    } else if (newStatus === 'READY' || newStatus === 'READY_FOR_HANDOVER') {
+      updatePayload.readyAt = serverTimestamp();
+    } else if (newStatus === 'HANDED_OVER' || newStatus === 'PICKED_UP') {
+      updatePayload.handedOverAt = serverTimestamp();
+    } else if (newStatus === 'REJECTED' || newStatus === 'CANCELLED') {
+      updatePayload.rejectionReason = rejectionReason || 'Cancelled';
+    }
+
+    await updateDoc(ticketRef, updatePayload);
+
+    // If marked READY or READY_FOR_HANDOVER, broadcast realtime event to waiter
+    if (newStatus === 'READY' || newStatus === 'READY_FOR_HANDOVER') {
+      rtdbPresenceService.emitLiveSignal(restaurantId, {
+        eventType: 'ORDER_READY',
+        tableNumber,
+        payload: {
+          ticketId,
+          orderId,
+          stationId: ticketData.stationId,
+        },
+      });
+    }
+
+    // Check sibling tickets to update parent order status
+    if (orderId) {
+      try {
+        const sibQuery = query(collection(db, 'kitchenTickets'), where('orderId', '==', orderId));
+        const sibSnap = await getDocs(sibQuery);
+        if (!sibSnap.empty) {
+          const statuses = sibSnap.docs.map((d) => (d.id === ticketId ? newStatus : d.data().status));
+          let parentOrderStatus: OrderStatus | undefined;
+          if (statuses.every((s) => s === 'HANDED_OVER' || s === 'PICKED_UP' || s === 'SERVED')) {
+            parentOrderStatus = 'PICKED_UP';
+          } else if (statuses.every((s) => s === 'READY' || s === 'READY_FOR_HANDOVER' || s === 'HANDED_OVER' || s === 'PICKED_UP')) {
+            parentOrderStatus = 'READY_FOR_HANDOVER';
+          } else if (statuses.some((s) => s === 'PREPARING' || s === 'READY')) {
+            parentOrderStatus = 'PREPARING';
+          } else if (statuses.some((s) => s === 'ACCEPTED')) {
+            parentOrderStatus = 'ACCEPTED';
+          }
+
+          if (parentOrderStatus) {
+            await this.updateOrderStatus(
+              restaurantId,
+              orderId,
+              parentOrderStatus,
+              undefined,
+              'kitchen',
+              `Kitchen ticket transitioned to ${newStatus}`
+            );
+          }
+        }
+      } catch (err) {
+        console.warn('[OrderRepository] Failed to sync parent order status:', err);
+      }
+    }
   }
 }

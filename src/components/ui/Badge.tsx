@@ -61,8 +61,9 @@ export const TableStatusBadge: React.FC<{ status: TableStatus }> = ({ status }) 
       return <Badge variant="default" dot>Reserved</Badge>;
     case 'CLEANING':
       return <Badge variant="orange" dot>Cleaning</Badge>;
+    case 'OUT_OF_SERVICE':
     case 'DISABLED':
-      return <Badge variant="danger" dot>Disabled</Badge>;
+      return <Badge variant="danger" dot>Out of Service</Badge>;
     default:
       return <Badge>{status}</Badge>;
   }
@@ -78,7 +79,10 @@ export const OrderStatusBadge: React.FC<{ status: OrderStatus | KitchenTicketSta
     case 'PREPARING':
       return <Badge variant="orange" dot className="animate-pulse">Preparing</Badge>;
     case 'READY':
-      return <Badge variant="success" dot>Ready to Serve</Badge>;
+    case 'READY_FOR_HANDOVER':
+      return <Badge variant="success" dot className="animate-pulse">Ready to Serve</Badge>;
+    case 'PICKED_UP':
+      return <Badge variant="purple" dot>Picked Up</Badge>;
     case 'SERVED':
       return <Badge variant="success">Served</Badge>;
     case 'PAYMENT_PENDING':

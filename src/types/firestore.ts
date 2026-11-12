@@ -202,8 +202,8 @@ export interface FirestoreOrder {
   tableSessionId: string;
   tableId: string;
   tableNumber: string;
-  customerPhone?: string;
-  customerName?: string;
+  customerPhone?: string | null;
+  customerName?: string | null;
   status: OrderStatus;
   paymentStatus: 'UNPAID' | 'PAID';
   itemCount: number;
@@ -212,8 +212,8 @@ export interface FirestoreOrder {
   sgstAmount: number;
   discountAmount: number;
   totalAmount: number;
-  specialNotes?: string;
-  idempotencyKey?: string;
+  specialNotes?: string | null;
+  idempotencyKey?: string | null;
   createdAt: Timestamp | FieldValue | string;
   updatedAt?: Timestamp | FieldValue | string;
 }
@@ -224,8 +224,8 @@ export interface FirestoreOrderItem {
   restaurantId: string;
   menuItemId: string;
   itemName: string;
-  variantId?: string;
-  variantName?: string;
+  variantId?: string | null;
+  variantName?: string | null;
   addons: { id: string; name: string; price: number }[];
   unitPrice: number;
   quantity: number;
@@ -271,6 +271,7 @@ export interface FirestoreKitchenTicket {
     specialInstructions?: string;
   }[];
   createdAt: Timestamp | FieldValue | string;
+  updatedAt?: Timestamp | FieldValue | string;
   readyAt?: Timestamp | FieldValue | string;
   handedOverAt?: Timestamp | FieldValue | string;
 }

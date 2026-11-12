@@ -4,24 +4,46 @@
 
 export type StaffRoleType = 'admin' | 'owner' | 'waiter' | 'kitchen' | 'counter';
 
-export type TableStatus = 'AVAILABLE' | 'OCCUPIED' | 'RESERVED' | 'PAYMENT_PENDING' | 'CLEANING' | 'DISABLED';
+export type TableStatus = 'AVAILABLE' | 'OCCUPIED' | 'RESERVED' | 'PAYMENT_PENDING' | 'CLEANING' | 'OUT_OF_SERVICE' | 'DISABLED';
 
 export type OrderStatus =
+  | 'NEW'
   | 'PLACED'
   | 'ACCEPTED'
   | 'PREPARING'
   | 'READY'
+  | 'READY_FOR_HANDOVER'
+  | 'PICKED_UP'
   | 'SERVED'
   | 'PAYMENT_PENDING'
   | 'COMPLETED'
   | 'CANCELLED'
   | 'REJECTED';
 
-export type KitchenTicketStatus = 'NEW' | 'ACCEPTED' | 'PREPARING' | 'READY' | 'HANDED_OVER' | 'REJECTED' | 'SERVED';
+export type KitchenTicketStatus =
+  | 'NEW'
+  | 'ACCEPTED'
+  | 'PREPARING'
+  | 'READY'
+  | 'READY_FOR_HANDOVER'
+  | 'PICKED_UP'
+  | 'HANDED_OVER'
+  | 'REJECTED'
+  | 'SERVED'
+  | 'CANCELLED';
 
 export type PaymentMethod = 'CASH' | 'UPI' | 'RAZORPAY' | 'CARD';
 
-export type PaymentStatus = 'UNPAID' | 'PENDING' | 'PROCESSING' | 'PAID' | 'FAILED' | 'PARTIALLY_PAID' | 'REFUNDED' | 'CANCELLED';
+export type PaymentStatus =
+  | 'UNPAID'
+  | 'PENDING'
+  | 'PROCESSING'
+  | 'PAID'
+  | 'FAILED'
+  | 'PARTIALLY_PAID'
+  | 'REFUNDED'
+  | 'PARTIALLY_REFUNDED'
+  | 'CANCELLED';
 
 export type ServiceRequestType = 'ASSISTANCE' | 'CALL_WAITER' | 'REQUEST_BILL' | 'CLEANING' | 'WATER';
 

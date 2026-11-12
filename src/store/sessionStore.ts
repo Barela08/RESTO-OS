@@ -108,7 +108,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
             table_number: d.table_number,
             seating_capacity: 4,
             floor_area: 'MAIN_FLOOR',
-            status: 'OCCUPIED' as any,
+            status: 'AVAILABLE' as any,
             is_active: true,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),

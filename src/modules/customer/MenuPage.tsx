@@ -200,7 +200,7 @@ export const MenuPage: React.FC = () => {
     setIsSubmittingOrder(true);
     try {
       const idempotencyKey = `idem-${currentSession.id}-${Date.now()}`;
-      const order = dbAdapter.placeOrder({
+      const order = await dbAdapter.placeOrderAsync({
         tableSessionId: currentSession.id,
         items: cartItems.map((i) => ({
           menuItemId: i.menu_item.id,

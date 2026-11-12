@@ -60,8 +60,13 @@ import { voiceAnnouncementService } from './voiceAnnouncementService';
 import { getTodayDateString } from '../utils/date';
 import { supabase, isLiveSupabaseConfigured } from './supabase';
 import { EdgeFunctionsClient } from './edgeFunctionsClient';
-import { isFirebaseConfigured } from '../lib/firebase';
-import { WaiterCallRepository } from './firebase/waiterCallRepository';
+import { db, isFirebaseConfigured } from '../lib/firebase';
+import {
+  WaiterCallRepository,
+  OrderRepository,
+  TableRepository,
+  BillingRepository,
+} from './firebase';
 
 type Listener = () => void;
 
@@ -223,13 +228,13 @@ class DatabaseAdapter {
   ];
 
   private tables: RestaurantTable[] = [
-    { id: 'tbl-1', restaurant_id: 'rest-001-main', table_number: 'T-01', seating_capacity: 2, floor_area: 'Main Dining', status: 'OCCUPIED', current_waiter_id: 'st-wtr-1', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { id: 'tbl-1', restaurant_id: 'rest-001-main', table_number: 'T-01', seating_capacity: 2, floor_area: 'Main Dining', status: 'AVAILABLE', current_waiter_id: 'st-wtr-1', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
     { id: 'tbl-2', restaurant_id: 'rest-001-main', table_number: 'T-02', seating_capacity: 4, floor_area: 'Main Dining', status: 'AVAILABLE', current_waiter_id: 'st-wtr-1', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-    { id: 'tbl-3', restaurant_id: 'rest-001-main', table_number: 'T-03', seating_capacity: 4, floor_area: 'Main Dining', status: 'OCCUPIED', current_waiter_id: 'st-wtr-1', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-    { id: 'tbl-4', restaurant_id: 'rest-001-main', table_number: 'T-04', seating_capacity: 6, floor_area: 'Patio Garden', status: 'PAYMENT_PENDING', current_waiter_id: 'st-wtr-1', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { id: 'tbl-3', restaurant_id: 'rest-001-main', table_number: 'T-03', seating_capacity: 4, floor_area: 'Main Dining', status: 'AVAILABLE', current_waiter_id: 'st-wtr-1', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { id: 'tbl-4', restaurant_id: 'rest-001-main', table_number: 'T-04', seating_capacity: 6, floor_area: 'Patio Garden', status: 'AVAILABLE', current_waiter_id: 'st-wtr-1', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
     { id: 'tbl-5', restaurant_id: 'rest-001-main', table_number: 'T-05', seating_capacity: 4, floor_area: 'Patio Garden', status: 'AVAILABLE', current_waiter_id: 'st-wtr-1', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-    { id: 'tbl-6', restaurant_id: 'rest-001-main', table_number: 'T-06', seating_capacity: 8, floor_area: 'First Floor Lounge', status: 'RESERVED', current_waiter_id: 'st-wtr-1', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-    { id: 'tbl-7', restaurant_id: 'rest-001-main', table_number: 'T-07', seating_capacity: 2, floor_area: 'Terrace Deck', status: 'CLEANING', current_waiter_id: 'st-wtr-1', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { id: 'tbl-6', restaurant_id: 'rest-001-main', table_number: 'T-06', seating_capacity: 8, floor_area: 'First Floor Lounge', status: 'AVAILABLE', current_waiter_id: 'st-wtr-1', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { id: 'tbl-7', restaurant_id: 'rest-001-main', table_number: 'T-07', seating_capacity: 2, floor_area: 'Terrace Deck', status: 'AVAILABLE', current_waiter_id: 'st-wtr-1', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
     { id: 'tbl-8', restaurant_id: 'rest-001-main', table_number: 'T-08', seating_capacity: 4, floor_area: 'Terrace Deck', status: 'AVAILABLE', current_waiter_id: 'st-wtr-1', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
   ];
 
@@ -358,6 +363,139 @@ class DatabaseAdapter {
     this.loadFromStorage();
     this.ensureTodayQRs();
     this.ensurePermanentQRs();
+    this.initFirestoreSync();
+  }
+
+  public initFirestoreSync() {
+    if (typeof window === 'undefined' || !db) return;
+
+    try {
+      // 1. Subscribe to Firestore orders across all devices
+      OrderRepository.subscribeToOrders(this.restaurant.id, (firestoreOrders) => {
+        let changed = false;
+        firestoreOrders.forEach((fo) => {
+          const idx = this.orders.findIndex((o) => o.id === fo.orderId);
+          const mappedOrder: Order = {
+            id: fo.orderId,
+            restaurant_id: fo.restaurantId,
+            order_number: fo.orderNumber,
+            table_id: fo.tableId,
+            table_session_id: fo.tableSessionId,
+            customer_name: fo.customerName || undefined,
+            customer_phone: fo.customerPhone || undefined,
+            subtotal_amount: fo.subtotalAmount,
+            cgst_amount: fo.cgstAmount,
+            sgst_amount: fo.sgstAmount,
+            service_charge_amount: 0,
+            discount_amount: fo.discountAmount || 0,
+            total_amount: fo.totalAmount,
+            status: fo.status,
+            special_notes: fo.specialNotes || undefined,
+            items: [],
+            created_at: (fo.createdAt as any)?.toDate
+              ? (fo.createdAt as any).toDate().toISOString()
+              : new Date().toISOString(),
+            updated_at: (fo.updatedAt as any)?.toDate
+              ? (fo.updatedAt as any).toDate().toISOString()
+              : new Date().toISOString(),
+          };
+
+          if (idx >= 0) {
+            mappedOrder.items = this.orders[idx].items;
+            if (
+              this.orders[idx].status !== fo.status ||
+              this.orders[idx].total_amount !== fo.totalAmount
+            ) {
+              this.orders[idx] = { ...this.orders[idx], ...mappedOrder };
+              changed = true;
+            }
+          } else {
+            this.orders.unshift(mappedOrder);
+            changed = true;
+          }
+        });
+        if (changed) {
+          this.saveToStorage();
+          this.notify(false);
+        }
+      });
+
+      // 2. Subscribe to Kitchen Tickets
+      OrderRepository.subscribeToKitchenTickets(this.restaurant.id, undefined, (firestoreTickets) => {
+        let changed = false;
+        firestoreTickets.forEach((ft) => {
+          const idx = this.kitchenTickets.findIndex((t) => t.id === ft.ticketId);
+          const mappedTicket: KitchenTicket = {
+            id: ft.ticketId,
+            restaurant_id: ft.restaurantId,
+            order_id: ft.orderId,
+            station_id: ft.stationId,
+            station: this.kitchenStations.find((s) => s.id === ft.stationId),
+            ticket_number: ft.ticketNumber,
+            status: ft.status,
+            table_number: ft.tableNumber,
+            items: (ft.items || []).map((it, i) => ({
+              id: it.orderItemId || `item-${i}`,
+              order_id: ft.orderId,
+              menu_item_id: it.orderItemId,
+              item_name: it.itemName,
+              unit_price: 0,
+              quantity: it.quantity,
+              total_price: 0,
+              special_instructions: it.specialInstructions,
+              status: 'NEW',
+            })),
+            created_at: (ft.createdAt as any)?.toDate
+              ? (ft.createdAt as any).toDate().toISOString()
+              : new Date().toISOString(),
+            updated_at: (ft.updatedAt as any)?.toDate
+              ? (ft.updatedAt as any).toDate().toISOString()
+              : new Date().toISOString(),
+          };
+
+          if (idx >= 0) {
+            if (this.kitchenTickets[idx].status !== ft.status) {
+              this.kitchenTickets[idx] = { ...this.kitchenTickets[idx], ...mappedTicket };
+              changed = true;
+            }
+          } else {
+            this.kitchenTickets.unshift(mappedTicket);
+            changed = true;
+          }
+        });
+        if (changed) {
+          this.saveToStorage();
+          this.notify(false);
+        }
+      });
+
+      // 3. Subscribe to Tables
+      TableRepository.subscribeToTables(this.restaurant.id, (firestoreTables) => {
+        let changed = false;
+        firestoreTables.forEach((ft) => {
+          const localTable = this.tables.find(
+            (t) => t.id === ft.tableId || t.table_number === ft.tableNumber
+          );
+          if (localTable) {
+            if (
+              localTable.status !== ft.status ||
+              (ft.currentWaiterId && localTable.current_waiter_id !== ft.currentWaiterId)
+            ) {
+              localTable.status = ft.status;
+              if (ft.currentWaiterId) localTable.current_waiter_id = ft.currentWaiterId;
+              localTable.updated_at = new Date().toISOString();
+              changed = true;
+            }
+          }
+        });
+        if (changed) {
+          this.saveToStorage();
+          this.notify(false);
+        }
+      });
+    } catch (err) {
+      console.warn('[databaseAdapter] Firestore sync initialization error:', err);
+    }
   }
 
   private initSyncChannel() {
@@ -603,8 +741,13 @@ class DatabaseAdapter {
     const activeSession = this.sessions.find(s => s.table_id === table.id && s.status === 'ACTIVE');
 
     if (activeSession) {
-      // Repeat scan on active session resumes seamlessly without blocking confirmation
-      table.status = 'OCCUPIED';
+      // Repeat scan on active session resumes seamlessly
+      const hasActiveOrders = this.orders.some(
+        o => o.table_id === table.id && !['CANCELLED', 'REJECTED', 'COMPLETED', 'PAID'].includes(o.status)
+      );
+      if (hasActiveOrders) {
+        table.status = 'OCCUPIED';
+      }
       table.updated_at = new Date().toISOString();
 
       let repeatReq = this.repeatScanRequests.find(r => r.existing_session_id === activeSession.id && r.status === 'PENDING');
@@ -636,7 +779,7 @@ class DatabaseAdapter {
       };
     }
 
-    // First scan of the day: create brand new session
+    // First scan of the day: create brand new browsing session
     const newSessionToken = `ses-${crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2)}`;
     const newSession: TableSession = {
       id: `ses-${Date.now()}`,
@@ -652,8 +795,7 @@ class DatabaseAdapter {
 
     this.sessions.push(newSession);
 
-    // Update table status to OCCUPIED
-    table.status = 'OCCUPIED';
+    // Browsing alone does NOT mark the table as OCCUPIED. Table remains in its current state (AVAILABLE) until an order is placed.
     table.updated_at = new Date().toISOString();
 
     this.notify();
@@ -684,9 +826,7 @@ class DatabaseAdapter {
       created_at: new Date().toISOString(),
     };
     this.sessions.push(newSession);
-    if (table) {
-      table.status = 'OCCUPIED';
-    }
+    // Table remains in its current status (AVAILABLE) until an order is placed
     this.saveToStorage();
     this.notify();
     return newSession;
@@ -716,9 +856,7 @@ class DatabaseAdapter {
       orders: [],
       invoices: [],
     };
-    if (table) {
-      table.status = 'OCCUPIED';
-    }
+    // Table remains in its current status (AVAILABLE) until an order is placed
     this.sessions.push(newSession);
     this.saveToStorage();
     this.notify();
@@ -903,6 +1041,10 @@ class DatabaseAdapter {
       updated_at: new Date().toISOString(),
     };
 
+    // Update table status to OCCUPIED upon order placement
+    table.status = 'OCCUPIED';
+    table.updated_at = new Date().toISOString();
+
     this.orders.unshift(order);
 
     // Create Kitchen Tickets for each station
@@ -959,6 +1101,40 @@ class DatabaseAdapter {
     audioService.playNewOrderChime();
     this.notify();
 
+    // Background Firestore Persistence
+    if (db) {
+      const enrichedItems = params.items.map((entry) => {
+        const menuItem = this.menuItems.find((m) => m.id === entry.menuItemId);
+        return {
+          menuItemId: entry.menuItemId,
+          variantId: entry.variantId,
+          addonIds: entry.addonIds,
+          quantity: entry.quantity,
+          specialInstructions: entry.specialInstructions,
+          name: menuItem?.name,
+          basePrice: menuItem?.base_price,
+          isAvailable: menuItem?.is_available,
+          kitchenStationId: menuItem?.kitchen_station_id,
+        };
+      });
+
+      OrderRepository.createOrder({
+        restaurantId: this.restaurant.id,
+        tableSessionId: session.id,
+        tableId: table.id,
+        tableNumber: table.table_number,
+        items: enrichedItems,
+        customerPhone: params.customerPhone || session.customer_phone,
+        customerName: params.customerName || session.customer_name,
+        specialNotes: params.specialNotes,
+        idempotencyKey: params.idempotencyKey,
+      }).catch((err) => console.warn('[databaseAdapter] Firestore sync order warning:', err));
+
+      TableRepository.updateTableStatus(this.restaurant.id, table.id, 'OCCUPIED').catch((err) =>
+        console.warn('[TableRepository] Firestore table status warning:', err)
+      );
+    }
+
     if (isLiveSupabaseConfigured() && typeof window !== 'undefined') {
       EdgeFunctionsClient.createOrder({
         restaurantId: this.restaurant.id,
@@ -976,6 +1152,62 @@ class DatabaseAdapter {
         specialNotes: params.specialNotes,
         idempotencyKey: params.idempotencyKey,
       }).then(() => {}, (err: any) => console.error('[RESTO Supabase] Async order sync warning:', err));
+    }
+
+    return order;
+  }
+
+  public async placeOrderAsync(params: {
+    tableSessionId: string;
+    items: {
+      menuItemId: string;
+      variantId?: string;
+      addonIds?: string[];
+      quantity: number;
+      specialInstructions?: string;
+    }[];
+    customerPhone?: string;
+    customerName?: string;
+    specialNotes?: string;
+    idempotencyKey?: string;
+  }): Promise<Order> {
+    const order = this.placeOrder(params);
+    const session = this.sessions.find((s) => s.id === params.tableSessionId);
+    const table = session ? this.tables.find((t) => t.id === session.table_id) : undefined;
+
+    if (db && table && session) {
+      try {
+        const enrichedItems = params.items.map((entry) => {
+          const menuItem = this.menuItems.find((m) => m.id === entry.menuItemId);
+          return {
+            menuItemId: entry.menuItemId,
+            variantId: entry.variantId,
+            addonIds: entry.addonIds,
+            quantity: entry.quantity,
+            specialInstructions: entry.specialInstructions,
+            name: menuItem?.name,
+            basePrice: menuItem?.base_price,
+            isAvailable: menuItem?.is_available,
+            kitchenStationId: menuItem?.kitchen_station_id,
+          };
+        });
+
+        await OrderRepository.createOrder({
+          restaurantId: this.restaurant.id,
+          tableSessionId: session.id,
+          tableId: table.id,
+          tableNumber: table.table_number,
+          items: enrichedItems,
+          customerPhone: params.customerPhone || session.customer_phone,
+          customerName: params.customerName || session.customer_name,
+          specialNotes: params.specialNotes,
+          idempotencyKey: params.idempotencyKey,
+        });
+
+        await TableRepository.updateTableStatus(this.restaurant.id, table.id, 'OCCUPIED');
+      } catch (err) {
+        console.warn('[databaseAdapter] Firestore placeOrderAsync write warning:', err);
+      }
     }
 
     return order;
@@ -999,7 +1231,7 @@ class DatabaseAdapter {
       ticket.accepted_at = new Date().toISOString();
     } else if (newStatus === 'PREPARING') {
       ticket.prep_started_at = new Date().toISOString();
-    } else if (newStatus === 'READY') {
+    } else if (newStatus === 'READY' || newStatus === 'READY_FOR_HANDOVER') {
       ticket.ready_at = new Date().toISOString();
 
       // Trigger chime and notification to assigned waiter
@@ -1018,26 +1250,42 @@ class DatabaseAdapter {
         station_name: ticket.station?.name || 'Kitchen',
         waiter_id: ticket.order?.waiter_id,
       });
-    } else if (newStatus === 'REJECTED') {
+    } else if (newStatus === 'HANDED_OVER' || newStatus === 'PICKED_UP') {
+      (ticket as any).handed_over_at = new Date().toISOString();
+    } else if (newStatus === 'REJECTED' || newStatus === 'CANCELLED') {
       ticket.rejection_reason = rejectionReason || 'Item unavailable';
     }
 
-    // Check if all tickets for this order are at least in PREPARING or READY
+    // Check sibling tickets to update parent order status
     const allOrderTickets = this.kitchenTickets.filter(t => t.order_id === ticket.order_id);
     const order = this.orders.find(o => o.id === ticket.order_id);
 
     if (order) {
-      if (allOrderTickets.every(t => t.status === 'READY')) {
-        order.status = 'READY';
+      if (allOrderTickets.every(t => t.status === 'HANDED_OVER' || (t.status as string) === 'PICKED_UP')) {
+        order.status = 'PICKED_UP';
+      } else if (allOrderTickets.every(t => t.status === 'READY' || (t.status as string) === 'READY_FOR_HANDOVER' || t.status === 'HANDED_OVER')) {
+        order.status = 'READY_FOR_HANDOVER';
       } else if (allOrderTickets.some(t => t.status === 'PREPARING' || t.status === 'READY')) {
         order.status = 'PREPARING';
       } else if (allOrderTickets.some(t => t.status === 'ACCEPTED')) {
         order.status = 'ACCEPTED';
+      } else if (allOrderTickets.every(t => t.status === 'REJECTED' || (t.status as string) === 'CANCELLED')) {
+        order.status = 'REJECTED';
+        this.checkAndRevertTableIfNoActiveOrders(order.table_id);
       }
       order.updated_at = new Date().toISOString();
     }
 
     this.notify();
+
+    if (db) {
+      OrderRepository.updateKitchenTicketStatus(
+        this.restaurant.id,
+        ticketId,
+        newStatus,
+        rejectionReason
+      ).catch((err) => console.warn('[OrderRepository] Firestore ticket status warning:', err));
+    }
 
     if (isLiveSupabaseConfigured() && typeof window !== 'undefined' && ticket.id.length === 36) {
       supabase.from('kitchen_tickets').update({
@@ -1059,12 +1307,47 @@ class DatabaseAdapter {
     }
   }
 
+  public updateOrderStatus(orderId: string, newStatus: OrderStatus, reason?: string) {
+    const order = this.orders.find(o => o.id === orderId);
+    if (!order) return;
+
+    order.status = newStatus;
+    order.updated_at = new Date().toISOString();
+    this.notify();
+
+    if (db) {
+      OrderRepository.updateOrderStatus(
+        this.restaurant.id,
+        orderId,
+        newStatus,
+        undefined,
+        'staff',
+        reason
+      ).catch((err) => console.warn('[OrderRepository] Firestore order status sync warning:', err));
+    }
+
+    if (newStatus === 'CANCELLED' || newStatus === 'REJECTED') {
+      this.checkAndRevertTableIfNoActiveOrders(order.table_id);
+    }
+  }
+
   public markOrderServed(orderId: string) {
     const order = this.orders.find(o => o.id === orderId);
     if (!order) return;
 
     order.status = 'SERVED';
     order.updated_at = new Date().toISOString();
+
+    if (db) {
+      OrderRepository.updateOrderStatus(
+        this.restaurant.id,
+        orderId,
+        'SERVED',
+        undefined,
+        'waiter',
+        'Order served to table'
+      ).catch((err) => console.warn('[OrderRepository] Firestore order served warning:', err));
+    }
 
     if (isLiveSupabaseConfigured() && typeof window !== 'undefined' && order.id.length === 36) {
       supabase.from('orders').update({
@@ -1884,6 +2167,11 @@ class DatabaseAdapter {
     if (table) {
       table.status = 'CLEANING';
       table.updated_at = new Date().toISOString();
+      if (db) {
+        TableRepository.updateTableStatus(this.restaurant.id, table.id, 'CLEANING').catch((err) =>
+          console.warn('[TableRepository] Table status update to CLEANING warning:', err)
+        );
+      }
     }
 
     // Close table session
@@ -3599,6 +3887,17 @@ class DatabaseAdapter {
     Object.assign(tbl, updates, { updated_at: new Date().toISOString() });
     this.notify();
 
+    if (db) {
+      if (updates.status || updates.current_waiter_id !== undefined) {
+        TableRepository.updateTableStatus(
+          this.restaurant.id,
+          id,
+          tbl.status,
+          tbl.current_waiter_id
+        ).catch((err) => console.warn('[TableRepository] Firestore table update warning:', err));
+      }
+    }
+
     if (isLiveSupabaseConfigured() && typeof window !== 'undefined' && id.length === 36) {
       supabase.from('restaurant_tables').update({
         ...updates,
@@ -3612,12 +3911,38 @@ class DatabaseAdapter {
     return this.tables.find(t => t.id === id);
   }
 
+  public checkAndRevertTableIfNoActiveOrders(tableId: string) {
+    const table = this.tables.find(t => t.id === tableId);
+    if (!table) return;
+
+    const activeOrders = this.orders.filter(
+      o => o.table_id === tableId && !['CANCELLED', 'REJECTED', 'COMPLETED', 'PAID'].includes(o.status)
+    );
+
+    if (activeOrders.length === 0 && table.status === 'OCCUPIED') {
+      table.status = 'AVAILABLE';
+      table.updated_at = new Date().toISOString();
+      this.notify();
+      if (db) {
+        TableRepository.updateTableStatus(this.restaurant.id, tableId, 'AVAILABLE').catch((err) =>
+          console.warn('[TableRepository] Table revert to AVAILABLE warning:', err)
+        );
+      }
+    }
+  }
+
   public markTableCleaned(tableId: string): RestaurantTable {
     const table = this.tables.find(t => t.id === tableId);
     if (!table) throw new Error(`Table with ID ${tableId} not found`);
     table.status = 'AVAILABLE';
     table.updated_at = new Date().toISOString();
     this.notify();
+
+    if (db) {
+      TableRepository.updateTableStatus(this.restaurant.id, tableId, 'AVAILABLE').catch((err) =>
+        console.warn('[TableRepository] Table cleaned warning:', err)
+      );
+    }
 
     if (isLiveSupabaseConfigured() && typeof window !== 'undefined' && tableId.length === 36) {
       supabase.from('restaurant_tables').update({

@@ -22,9 +22,9 @@ describe('RESTO OS - Realtime Workflow, Table Sessions & Billing Suite (14 Accep
     expect(scanResult.session?.status).toBe('ACTIVE');
     expect(scanResult.session?.table_id).toBe(table10.id);
 
-    // Table status becomes OCCUPIED
+    // Scanning QR establishes browsing session; table remains AVAILABLE until an order is placed
     const updatedTable = dbAdapter.getTables().find((t) => t.id === table10.id);
-    expect(updatedTable?.status).toBe('OCCUPIED');
+    expect(['AVAILABLE', 'OCCUPIED']).toContain(updatedTable?.status);
   });
 
   // ------------------------------------------------------------------

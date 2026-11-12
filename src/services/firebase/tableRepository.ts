@@ -159,8 +159,7 @@ export class TableRepository {
         await setDoc(newSessionRef, sessionPayload);
         activeSession = sessionPayload;
 
-        // Mark table occupied
-        await this.updateTableStatus(table.restaurantId, table.tableId, 'OCCUPIED');
+        // Browsing session created. Table remains in its current status (AVAILABLE) until an order is placed.
       }
 
       return {
