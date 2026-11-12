@@ -1,0 +1,32 @@
+[
+  {
+    "_id": "owner",
+    "roleName": "Restaurant Owner",
+    "description": "Full administrative ownership, staff creation, financial reporting, and audit log access",
+    "isSystemRole": true
+  },
+  {
+    "_id": "admin",
+    "roleName": "General Manager / Admin",
+    "description": "Floor management, menu updates, table status control, and operational staff supervision",
+    "isSystemRole": true
+  },
+  {
+    "_id": "counter",
+    "roleName": "Cash Counter / Cashier",
+    "description": "POS billing, invoice issuance, cash payment confirmation, and daily collection closing",
+    "isSystemRole": true
+  },
+  {
+    "_id": "waiter",
+    "roleName": "Floor Waiter",
+    "description": "Table assignment, customer service requests, assistance answering, and order delivery",
+    "isSystemRole": true
+  },
+  {
+    "_id": "kitchen",
+    "roleName": "Kitchen Chef",
+    "description": "Kitchen Display System ticket tracking, cooking progress, and handover signaling",
+    "isSystemRole": true
+  }
+]

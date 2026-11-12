@@ -1,0 +1,32 @@
+[
+  {
+    "_id": "perm-owner-all",
+    "roleId": "owner",
+    "module": "all",
+    "actions": ["create", "read", "update", "delete"]
+  },
+  {
+    "_id": "perm-admin-ops",
+    "roleId": "admin",
+    "module": "operations",
+    "actions": ["create", "read", "update"]
+  },
+  {
+    "_id": "perm-counter-billing",
+    "roleId": "counter",
+    "module": "billing",
+    "actions": ["create", "read", "update"]
+  },
+  {
+    "_id": "perm-waiter-service",
+    "roleId": "waiter",
+    "module": "tables",
+    "actions": ["read", "update"]
+  },
+  {
+    "_id": "perm-kitchen-kds",
+    "roleId": "kitchen",
+    "module": "kitchen",
+    "actions": ["read", "update"]
+  }
+]
