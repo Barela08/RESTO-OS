@@ -14,9 +14,9 @@ No production DDL, data mutation, migration application, deployment, or merge wa
 
 ### Frontend / repository
 
-- `src/services/supabase.ts` falls back to a fake demo project URL and fake key when environment variables are missing.
-- `.env.example` enables `VITE_ENABLE_MOCK_FALLBACK=true`.
-- `src/services/databaseAdapter.ts` seeds demo restaurant, staff, menu and operational records in process memory.
+- The original branch used a fake demo Supabase URL/key fallback. This was removed on `security-hardening`; the client now fails fast when valid browser-safe Supabase environment variables are absent.
+- `.env.example` was updated to document the required Supabase URL and publishable key. No mock fallback should be used in production.
+- `src/services/databaseAdapter.ts` still seeds demo restaurant, staff, menu and operational records in process memory. It also contains hard-coded demo staff identities and password-like values; this file must not be used as a production authentication source and the seeded credentials must be removed from production builds.
 - `src/store/authStore.ts` authenticates against the local adapter and restores staff identity from browser storage.
 - `src/app/guards/CustomerSessionGuard.tsx` contains a table selector intended for demo/testing.
 - `src/store/sessionStore.ts` restores table sessions from the local adapter rather than revalidating against the server.
@@ -50,6 +50,20 @@ No production DDL, data mutation, migration application, deployment, or merge wa
 - Do not drop or truncate populated tables as a shortcut.
 - Do not run old migration files blindly. Supabase migration history was previously found empty; reconcile actual live schema before adopting migrations.
 - Do not describe the app as production-ready until real database flows and cross-role tests pass.
+
+## Current change-set status (`security-hardening`)
+
+- [x] Remove fake Supabase URL/key fallback and require explicit browser-safe environment configuration.
+- [x] Update `.env.example` to remove mock-fallback configuration and document publishable-key setup.
+- [x] Record the live database and application security findings in this audit.
+- [ ] Replace local staff authentication with Supabase Auth and server-side role resolution.
+- [ ] Replace local customer session/QR verification with a server-verified permanent QR workflow.
+- [ ] Replace local order/payment persistence with transactional database RPCs.
+- [ ] Replace browser-local dashboard synchronization with Supabase Realtime.
+- [ ] Reconcile the live schema and existing functions before preparing a safe, idempotent migration.
+- [ ] Run build, lint, automated tests and end-to-end acceptance tests.
+
+**Validation limitation:** This GitHub-only change session did not execute the repository's npm scripts. Build, lint and test status are therefore unverified. The branch is not deployable until those checks pass and the required Vercel environment variables are configured.
 
 ## Backup gate
 
