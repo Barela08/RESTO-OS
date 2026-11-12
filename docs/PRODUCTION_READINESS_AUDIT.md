@@ -53,7 +53,7 @@ No production DDL, data mutation, migration application, deployment, or merge wa
 
 ## Current change-set status (`security-hardening`)
 
-- [x] Remove fake Supabase URL/key fallback and require explicit browser-safe environment configuration.
+- [x] Remove fake Supabase URL/key fallback and require explicit browser-safe Supabase environment configuration.
 - [x] Update `.env.example` to remove mock-fallback configuration and document publishable-key setup.
 - [x] Record the live database and application security findings in this audit.
 - [ ] Replace local staff authentication with Supabase Auth and server-side role resolution.
@@ -67,13 +67,18 @@ No production DDL, data mutation, migration application, deployment, or merge wa
 
 ## Backup gate
 
-**Status at audit time: NOT CHECKED by project owner.** Production schema changes remain blocked until the owner verifies the latest successful backup/recovery point in Supabase Dashboard → Database → Backups.
-
+At the initial audit, backup status was not confirmed. The project owner has since confirmed that the latest successful Supabase backup is available. This satisfies the backup-existence check, but a restore test has not yet been performed.
 
 ## Follow-up verification (2026-11-12)
 
 - The Supabase Realtime publication already contains the core operational tables: `orders`, `order_items`, `kitchen_tickets`, `waiter_calls`, `payments`, `invoices`, `restaurant_tables`, and `table_sessions`, among other tables. This verifies publication membership only; frontend subscriptions and event delivery still require implementation and tests.
-- A security-baseline migration proposal was added at `supabase/migrations/20261112090000_security_baseline.sql`. It creates explicit deny-by-default policies for the 23 tables flagged as having no policies, pins search paths on the eight flagged functions, and revokes execution of privileged RPCs that currently trust caller-supplied staff IDs. It is intentionally not applied to production because the backup status remains unverified and the restrictive cutover requires staging validation.
+- A security-baseline migration proposal was added at `supabase/migrations/20261112090000_security_baseline.sql`. It creates explicit deny-by-default policies for the 23 tables flagged as having no policies, pins search paths on the eight flagged functions, and revokes execution of privileged RPCs that currently trust caller-supplied staff IDs. It is intentionally not applied to production because replacement staff/guest policies and RPCs must be tested first.
 - Added `.github/workflows/ci.yml` to run npm install, production build/typecheck, lint, and unit tests on pushes and pull requests. Results are pending GitHub Actions execution.
 - No Edge Functions are currently deployed. No Edge Function has been deployed by this change set.
 - Staff Auth, permanent QR client integration, transactional order/payment replacement, Realtime frontend subscriptions, and end-to-end tests remain implementation work. The project is not production-ready.
+
+## Free validation and reporting scope
+
+- A no-paid-branch validation plan is recorded in `docs/FREE_STAGING_AND_RESTAURANT_DATA_PLAN.md`. It uses the GitHub review branch, GitHub Actions, and local PostgreSQL/Docker tests; it does not claim those tests fully replace Supabase integration testing.
+- The owner-facing reporting scope is intentionally minimal: today's billing/collection summary, bill count, pending/refund/void totals, date-wise sales history, and bill-level immutable snapshots. Operational order/payment detail remains stored only where required for POS, kitchen, waiter, billing, audit, and accounting workflows.
+- No production database changes have been made. Production changes remain blocked until migrations and role/restaurant isolation tests are reviewed and the owner approves the exact cutover.
