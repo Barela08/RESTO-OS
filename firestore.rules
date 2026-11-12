@@ -1,0 +1,911 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Models & Schema Invariants
+    // ===============================================================
+    //
+    // Multi-tenant restaurant architecture isolated by mandatory root-level restaurantId.
+    //
+    // 1. restaurants/{restaurantId}
+    //    - restaurantId: string (1-50 chars, immutable)
+    //    - name: string (1-100 chars)
+    //    - address: string (1-200 chars)
+    //    - city, state, postalCode, phone: string
+    //    - currency, currencySymbol, timezone: string
+    //    - isActive: bool
+    //    - settings: map
+    //
+    // 2. users/{userId}
+    //    - userId: string (Auth UID, immutable)
+    //    - restaurantId: string (1-50 chars)
+    //    - email: string (valid email format)
+    //    - fullName: string (1-100 chars)
+    //    - role: string ('master_admin'|'owner'|'admin'|'counter'|'waiter'|'kitchen'|'customer')
+    //    - isActive: bool
+    //    - [CRITICAL]: Non-admins can NEVER modify their own role (privilege escalation prevention)
+    //
+    // 3. staff/{staffId}
+    //    - staffId: string (1-50 chars, immutable)
+    //    - restaurantId: string (1-50 chars, immutable)
+    //    - userId: string (Auth UID, immutable)
+    //    - name: string (1-100 chars)
+    //    - employeeCode: string (1-50 chars)
+    //    - role: string
+    //    - isOnDuty: bool
+    //
+    // 4. staffRoles/{roleId} & rolePermissions/{permissionId}
+    //    - roleId / permissionId: string
+    //    - System & custom RBAC role configurations
+    //
+    // 5. restaurantTables/{tableId}
+    //    - tableId: string (1-50 chars)
+    //    - restaurantId: string (1-50 chars)
+    //    - tableNumber: string (1-20 chars)
+    //    - seatingCapacity: number (> 0)
+    //    - status: string ('AVAILABLE'|'OCCUPIED'|'RESERVED'|'PAYMENT_PENDING'|'CLEANING'|'DISABLED')
+    //    - isActive: bool
+    //
+    // 6. qrTokens/{tokenId}
+    //    - tokenId: string (1-50 chars)
+    //    - restaurantId: string (1-50 chars)
+    //    - tableId: string (1-50 chars)
+    //    - tokenHash: string (SHA-256 hash, 1-128 chars)
+    //    - isRevoked: bool
+    //
+    // 7. tableSessions/{sessionId}
+    //    - sessionId: string (1-50 chars, immutable)
+    //    - restaurantId: string (1-50 chars, immutable)
+    //    - tableId: string (1-50 chars, immutable)
+    //    - sessionToken: string (1-128 chars, immutable)
+    //    - status: string ('ACTIVE'|'PAYMENT_PENDING'|'COMPLETED'|'CLOSED')
+    //    - totalAmount: number (>= 0)
+    //
+    // 8. menuCategories/{categoryId}, menuItems/{itemId}, menuAddons/{addonId}
+    //    - Publicly readable restaurant catalog
+    //    - Write restricted strictly to owner/admin
+    //
+    // 9. kitchenStations/{stationId}
+    //    - stationId, restaurantId, name, code, displayOrder, isActive
+    //
+    // 10. orders/{orderId} & orderItems/{orderItemId}
+    //    - orderId: string (immutable)
+    //    - restaurantId, tableSessionId, tableId: string (immutable)
+    //    - status: string ('NEW'|'PLACED'|'ACCEPTED'|'PREPARING'|'READY'|'READY_FOR_HANDOVER'|'PICKED_UP'|'SERVED'|'PAYMENT_PENDING'|'COMPLETED'|'CANCELLED'|'REJECTED')
+    //    - paymentStatus: string ('UNPAID'|'PAID')
+    //    - Financial price totals: immutable once created
+    //
+    // 11. orderStatusHistory/{historyId}
+    //    - Append-only audit history of order transitions
+    //
+    // 12. kitchenTickets/{ticketId} & kitchenTicketItems/{ticketItemId}
+    //    - Kitchen fulfillment tickets per preparation station
+    //    - Status updates segmented by role (kitchen vs waiter)
+    //
+    // 13. waiterCalls/{callId} & waiterAssignments/{assignmentId}
+    //    - Table call bell requests & floor waiter assignments
+    //
+    // 14. serviceRequests/{requestId}
+    //    - Dining table service assistance requests
+    //
+    // 15. customers/{customerId}
+    //    - customerId, restaurantId, phone, fullName, totalVisits, totalSpend
+    //
+    // 16. invoices/{invoiceId} & payments/{paymentId} & refunds/{refundId}
+    //    - Immutable GST billing & payment records
+    //    - Once payments.status == 'PAID', the payment record is strictly immutable
+    //
+    // 17. notifications/{notificationId} & notificationEvents/{eventId}
+    //    - Internal real-time alerts dispatched to designated staff roles
+    //
+    // 18. auditLogs/{logId}
+    //    - Append-only security audit events (never modified or deleted)
+    //
+    // ===============================================================
+
+    // Universal Default Deny: Deny all reads/writes across database root
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ===============================================================
+    // Universal Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function hasUserDoc() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function getUserRole() {
+      return hasUserDoc() && ('role' in getUserData()) ? getUserData().role : '';
+    }
+
+    function hasRole(role) {
+      return isAuthenticated() && getUserRole() == role;
+    }
+
+    function isStaff() {
+      return isAuthenticated() && getUserRole() in ['owner', 'admin', 'counter', 'waiter', 'kitchen', 'master_admin'];
+    }
+
+    function isOwnerOrAdmin() {
+      return isAuthenticated() && getUserRole() in ['owner', 'admin', 'master_admin'];
+    }
+
+    function isCounter() {
+      return isAuthenticated() && getUserRole() in ['counter', 'owner', 'admin', 'master_admin'];
+    }
+
+    function isWaiter() {
+      return isAuthenticated() && getUserRole() in ['waiter', 'owner', 'admin', 'master_admin'];
+    }
+
+    function isKitchen() {
+      return isAuthenticated() && getUserRole() in ['kitchen', 'owner', 'admin', 'master_admin'];
+    }
+
+    // Multi-tenant Restaurant Scoped Isolation Helpers
+    function isStaffOf(restaurantId) {
+      return isStaff() && (getUserRole() == 'master_admin' || (hasUserDoc() && getUserData().restaurantId == restaurantId));
+    }
+
+    function isOwnerOrAdminOf(restaurantId) {
+      return isOwnerOrAdmin() && (getUserRole() == 'master_admin' || (hasUserDoc() && getUserData().restaurantId == restaurantId));
+    }
+
+    function isCounterOf(restaurantId) {
+      return isCounter() && (getUserRole() == 'master_admin' || (hasUserDoc() && getUserData().restaurantId == restaurantId));
+    }
+
+    function isWaiterOf(restaurantId) {
+      return isWaiter() && (getUserRole() == 'master_admin' || (hasUserDoc() && getUserData().restaurantId == restaurantId));
+    }
+
+    function isKitchenOf(restaurantId) {
+      return isKitchen() && (getUserRole() == 'master_admin' || (hasUserDoc() && getUserData().restaurantId == restaurantId));
+    }
+
+    // General Field & Type Validators
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    function validStringLength(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+             request.resource.data[field].size() >= minLen &&
+             request.resource.data[field].size() <= maxLen;
+    }
+
+    function isValidOptionalString(field, minLen, maxLen) {
+      return !(field in request.resource.data) ||
+             (request.resource.data[field] is string &&
+              request.resource.data[field].size() >= minLen &&
+              request.resource.data[field].size() <= maxLen);
+    }
+
+    function isValidEmail(email) {
+      return email is string &&
+             email.size() >= 5 &&
+             email.size() <= 100 &&
+             email.matches('^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$');
+    }
+
+    function isValidUrl(url) {
+      return url is string &&
+             url.size() <= 500 &&
+             (url.matches('^https://.*') || url.matches('^http://.*'));
+    }
+
+    function isNonNegativeNumber(field) {
+      return request.resource.data[field] is number && request.resource.data[field] >= 0;
+    }
+
+    function isPositiveNumber(field) {
+      return request.resource.data[field] is number && request.resource.data[field] > 0;
+    }
+
+    function isValidList(field, minSize, maxSize) {
+      return request.resource.data[field] is list &&
+             request.resource.data[field].size() >= minSize &&
+             request.resource.data[field].size() <= maxSize;
+    }
+
+    // ===============================================================
+    // Domain Validator Functions (Used on both create and update)
+    // ===============================================================
+
+    function isValidRestaurant(data) {
+      return hasRequiredFields(['name', 'address', 'city', 'phone', 'currency', 'isActive']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.address is string && data.address.size() > 0 && data.address.size() <= 200 &&
+             data.city is string && data.city.size() > 0 && data.city.size() <= 100 &&
+             data.phone is string && data.phone.size() > 0 && data.phone.size() <= 25 &&
+             data.currency is string && data.currency.size() > 0 && data.currency.size() <= 10 &&
+             data.isActive is bool &&
+             isValidOptionalString('email', 5, 100) &&
+             isValidOptionalString('gstin', 5, 30) &&
+             isValidOptionalString('fssaiLicense', 5, 30) &&
+             isValidOptionalString('logoUrl', 5, 500) &&
+             isValidOptionalString('tagline', 1, 200);
+    }
+
+    function isValidUser(data) {
+      return hasRequiredFields(['userId', 'restaurantId', 'email', 'fullName', 'role', 'isActive']) &&
+             data.userId is string && data.userId.size() > 0 && data.userId.size() <= 128 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.email is string && isValidEmail(data.email) &&
+             data.fullName is string && data.fullName.size() > 0 && data.fullName.size() <= 100 &&
+             data.role in ['master_admin', 'owner', 'admin', 'counter', 'waiter', 'kitchen', 'customer'] &&
+             data.isActive is bool &&
+             isValidOptionalString('username', 1, 50) &&
+             isValidOptionalString('phone', 1, 25) &&
+             isValidOptionalString('employeeId', 1, 50);
+    }
+
+    function isValidStaff(data) {
+      return hasRequiredFields(['staffId', 'restaurantId', 'userId', 'name', 'role', 'employeeCode', 'isOnDuty']) &&
+             data.staffId is string && data.staffId.size() > 0 && data.staffId.size() <= 50 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.userId is string && data.userId.size() > 0 && data.userId.size() <= 128 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.employeeCode is string && data.employeeCode.size() > 0 && data.employeeCode.size() <= 50 &&
+             data.role in ['owner', 'admin', 'counter', 'waiter', 'kitchen'] &&
+             data.isOnDuty is bool &&
+             isValidOptionalString('designation', 1, 100) &&
+             isValidOptionalString('shiftPreference', 1, 20);
+    }
+
+    function isValidTable(data) {
+      return hasRequiredFields(['tableId', 'restaurantId', 'tableNumber', 'seatingCapacity', 'status', 'isActive']) &&
+             data.tableId is string && data.tableId.size() > 0 && data.tableId.size() <= 50 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.tableNumber is string && data.tableNumber.size() > 0 && data.tableNumber.size() <= 20 &&
+             data.seatingCapacity is number && data.seatingCapacity > 0 && data.seatingCapacity <= 100 &&
+             data.status in ['AVAILABLE', 'OCCUPIED', 'RESERVED', 'PAYMENT_PENDING', 'CLEANING', 'DISABLED'] &&
+             data.isActive is bool &&
+             isValidOptionalString('floorArea', 1, 50) &&
+             isValidOptionalString('currentWaiterId', 1, 50) &&
+             isValidOptionalString('currentSessionId', 1, 50);
+    }
+
+    function isValidQRToken(data) {
+      return hasRequiredFields(['tokenId', 'restaurantId', 'tableId', 'tableNumber', 'tokenHash', 'isRevoked']) &&
+             data.tokenId is string && data.tokenId.size() > 0 && data.tokenId.size() <= 50 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.tableId is string && data.tableId.size() > 0 && data.tableId.size() <= 50 &&
+             data.tableNumber is string && data.tableNumber.size() > 0 && data.tableNumber.size() <= 20 &&
+             data.tokenHash is string && data.tokenHash.size() > 0 && data.tokenHash.size() <= 128 &&
+             data.isRevoked is bool &&
+             isValidOptionalString('qrImageUrl', 5, 500);
+    }
+
+    function isValidTableSession(data) {
+      return hasRequiredFields(['sessionId', 'restaurantId', 'tableId', 'tableNumber', 'status', 'totalAmount']) &&
+             data.sessionId is string && data.sessionId.size() > 0 && data.sessionId.size() <= 50 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.tableId is string && data.tableId.size() > 0 && data.tableId.size() <= 50 &&
+             data.tableNumber is string && data.tableNumber.size() > 0 && data.tableNumber.size() <= 20 &&
+             data.status in ['ACTIVE', 'PAYMENT_PENDING', 'COMPLETED', 'CLOSED'] &&
+             data.totalAmount is number && data.totalAmount >= 0 &&
+             isValidOptionalString('sessionToken', 1, 128) &&
+             isValidOptionalString('customerId', 1, 50) &&
+             isValidOptionalString('customerName', 1, 100) &&
+             isValidOptionalString('customerPhone', 1, 25);
+    }
+
+    function isValidMenuCategory(data) {
+      return hasRequiredFields(['categoryId', 'restaurantId', 'name', 'slug', 'displayOrder', 'isActive']) &&
+             data.categoryId is string && data.categoryId.size() > 0 && data.categoryId.size() <= 50 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.slug is string && data.slug.size() > 0 && data.slug.size() <= 100 &&
+             data.displayOrder is number &&
+             data.isActive is bool &&
+             isValidOptionalString('icon', 1, 50);
+    }
+
+    function isValidMenuItem(data) {
+      return hasRequiredFields(['itemId', 'restaurantId', 'categoryId', 'name', 'basePrice', 'isAvailable']) &&
+             data.itemId is string && data.itemId.size() > 0 && data.itemId.size() <= 50 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.categoryId is string && data.categoryId.size() > 0 && data.categoryId.size() <= 50 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.basePrice is number && data.basePrice >= 0 &&
+             data.isAvailable is bool &&
+             isValidOptionalString('description', 0, 500) &&
+             isValidOptionalString('imageUrl', 5, 500) &&
+             isValidOptionalString('kitchenStationId', 1, 50);
+    }
+
+    function isValidMenuAddon(data) {
+      return hasRequiredFields(['addonId', 'restaurantId', 'name', 'price', 'isAvailable']) &&
+             data.addonId is string && data.addonId.size() > 0 && data.addonId.size() <= 50 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.price is number && data.price >= 0 &&
+             data.isAvailable is bool;
+    }
+
+    function isValidKitchenStation(data) {
+      return hasRequiredFields(['stationId', 'restaurantId', 'name', 'code', 'isActive']) &&
+             data.stationId is string && data.stationId.size() > 0 && data.stationId.size() <= 50 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.code is string && data.code.size() > 0 && data.code.size() <= 30 &&
+             data.isActive is bool;
+    }
+
+    function isValidOrder(data) {
+      return hasRequiredFields(['orderId', 'restaurantId', 'tableSessionId', 'tableId', 'tableNumber', 'status', 'paymentStatus', 'totalAmount']) &&
+             data.orderId is string && data.orderId.size() > 0 && data.orderId.size() <= 60 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.tableSessionId is string && data.tableSessionId.size() > 0 && data.tableSessionId.size() <= 50 &&
+             data.tableId is string && data.tableId.size() > 0 && data.tableId.size() <= 50 &&
+             data.tableNumber is string && data.tableNumber.size() > 0 && data.tableNumber.size() <= 20 &&
+             data.status in ['NEW', 'PLACED', 'ACCEPTED', 'PREPARING', 'READY', 'READY_FOR_HANDOVER', 'PICKED_UP', 'SERVED', 'PAYMENT_PENDING', 'COMPLETED', 'CANCELLED', 'REJECTED'] &&
+             data.paymentStatus in ['UNPAID', 'PAID'] &&
+             data.totalAmount is number && data.totalAmount >= 0 &&
+             isValidOptionalString('customerName', 1, 100) &&
+             isValidOptionalString('customerPhone', 1, 25) &&
+             isValidOptionalString('specialNotes', 0, 500) &&
+             isValidOptionalString('idempotencyKey', 1, 128);
+    }
+
+    function isValidOrderItem(data) {
+      return hasRequiredFields(['orderItemId', 'orderId', 'restaurantId', 'menuItemId', 'itemName', 'unitPrice', 'quantity', 'totalPrice']) &&
+             data.orderItemId is string && data.orderItemId.size() > 0 && data.orderItemId.size() <= 60 &&
+             data.orderId is string && data.orderId.size() > 0 && data.orderId.size() <= 60 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.menuItemId is string && data.menuItemId.size() > 0 && data.menuItemId.size() <= 50 &&
+             data.itemName is string && data.itemName.size() > 0 && data.itemName.size() <= 100 &&
+             data.unitPrice is number && data.unitPrice >= 0 &&
+             data.quantity is number && data.quantity > 0 && data.quantity <= 100 &&
+             data.totalPrice is number && data.totalPrice >= 0 &&
+             isValidOptionalString('specialInstructions', 0, 300) &&
+             isValidOptionalString('kitchenStationId', 1, 50);
+    }
+
+    function isValidOrderStatusHistory(data) {
+      return hasRequiredFields(['historyId', 'orderId', 'restaurantId', 'previousStatus', 'newStatus']) &&
+             data.historyId is string && data.historyId.size() > 0 && data.historyId.size() <= 60 &&
+             data.orderId is string && data.orderId.size() > 0 && data.orderId.size() <= 60 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.previousStatus is string && data.previousStatus.size() <= 30 &&
+             data.newStatus is string && data.newStatus.size() <= 30 &&
+             isValidOptionalString('changedByUserId', 1, 128) &&
+             isValidOptionalString('changedByRole', 1, 30) &&
+             isValidOptionalString('reason', 0, 300);
+    }
+
+    function isValidKitchenTicket(data) {
+      return hasRequiredFields(['ticketId', 'restaurantId', 'orderId', 'stationId', 'tableNumber', 'status']) &&
+             data.ticketId is string && data.ticketId.size() > 0 && data.ticketId.size() <= 60 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.orderId is string && data.orderId.size() > 0 && data.orderId.size() <= 60 &&
+             data.stationId is string && data.stationId.size() > 0 && data.stationId.size() <= 50 &&
+             data.tableNumber is string && data.tableNumber.size() > 0 && data.tableNumber.size() <= 20 &&
+             data.status in ['NEW', 'ACCEPTED', 'PREPARING', 'READY', 'READY_FOR_HANDOVER', 'PICKED_UP', 'SERVED', 'HANDED_OVER', 'REJECTED'] &&
+             isValidOptionalString('stationName', 1, 100) &&
+             isValidOptionalString('ticketNumber', 1, 30);
+    }
+
+    function isValidKitchenTicketItem(data) {
+      return hasRequiredFields(['ticketItemId', 'ticketId', 'orderItemId', 'itemName', 'quantity']) &&
+             data.ticketItemId is string && data.ticketItemId.size() > 0 && data.ticketItemId.size() <= 60 &&
+             data.ticketId is string && data.ticketId.size() > 0 && data.ticketId.size() <= 60 &&
+             data.orderItemId is string && data.orderItemId.size() > 0 && data.orderItemId.size() <= 60 &&
+             data.itemName is string && data.itemName.size() > 0 && data.itemName.size() <= 100 &&
+             data.quantity is number && data.quantity > 0 && data.quantity <= 100 &&
+             isValidOptionalString('specialInstructions', 0, 300);
+    }
+
+    function isValidWaiterCall(data) {
+      return hasRequiredFields(['callId', 'restaurantId', 'tableId', 'tableNumber', 'tableSessionId', 'requestType', 'status']) &&
+             data.callId is string && data.callId.size() > 0 && data.callId.size() <= 60 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.tableId is string && data.tableId.size() > 0 && data.tableId.size() <= 50 &&
+             data.tableNumber is string && data.tableNumber.size() > 0 && data.tableNumber.size() <= 20 &&
+             data.tableSessionId is string && data.tableSessionId.size() > 0 && data.tableSessionId.size() <= 50 &&
+             data.requestType in ['CALL_WAITER', 'WATER', 'REQUEST_BILL', 'CLEANING', 'ASSISTANCE'] &&
+             data.status in ['REQUESTED', 'SENT', 'ACCEPTED', 'ON_THE_WAY', 'ARRIVED', 'COMPLETED', 'CANCELLED', 'ESCALATED', 'PENDING', 'ACKNOWLEDGED', 'IN_PROGRESS'] &&
+             isValidOptionalString('requestMessage', 0, 300) &&
+             isValidOptionalString('customerName', 1, 100) &&
+             isValidOptionalString('customerPhone', 1, 25) &&
+             isValidOptionalString('assignedWaiterId', 1, 50) &&
+             isValidOptionalString('assignedWaiterName', 1, 100);
+    }
+
+    function isValidWaiterAssignment(data) {
+      return hasRequiredFields(['assignmentId', 'restaurantId', 'tableId', 'waiterId', 'shiftDate', 'isPrimary']) &&
+             data.assignmentId is string && data.assignmentId.size() > 0 && data.assignmentId.size() <= 60 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.tableId is string && data.tableId.size() > 0 && data.tableId.size() <= 50 &&
+             data.waiterId is string && data.waiterId.size() > 0 && data.waiterId.size() <= 50 &&
+             data.shiftDate is string && data.shiftDate.size() <= 20 &&
+             data.isPrimary is bool;
+    }
+
+    function isValidServiceRequest(data) {
+      return hasRequiredFields(['requestId', 'restaurantId', 'tableSessionId', 'type', 'status']) &&
+             data.requestId is string && data.requestId.size() > 0 && data.requestId.size() <= 60 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.tableSessionId is string && data.tableSessionId.size() > 0 && data.tableSessionId.size() <= 50 &&
+             data.type is string && data.type.size() > 0 && data.type.size() <= 50 &&
+             data.status is string && data.status.size() > 0 && data.status.size() <= 30;
+    }
+
+    function isValidCustomer(data) {
+      return hasRequiredFields(['customerId', 'restaurantId', 'phone', 'fullName', 'totalVisits', 'totalSpend']) &&
+             data.customerId is string && data.customerId.size() > 0 && data.customerId.size() <= 60 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.phone is string && data.phone.size() >= 8 && data.phone.size() <= 25 &&
+             data.fullName is string && data.fullName.size() > 0 && data.fullName.size() <= 100 &&
+             data.totalVisits is number && data.totalVisits >= 0 &&
+             data.totalSpend is number && data.totalSpend >= 0 &&
+             isValidOptionalString('email', 5, 100);
+    }
+
+    function isValidInvoice(data) {
+      return hasRequiredFields(['invoiceId', 'restaurantId', 'tableSessionId', 'tableId', 'tableNumber', 'subtotalAmount', 'netAmount', 'status']) &&
+             data.invoiceId is string && data.invoiceId.size() > 0 && data.invoiceId.size() <= 60 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.tableSessionId is string && data.tableSessionId.size() > 0 && data.tableSessionId.size() <= 50 &&
+             data.tableId is string && data.tableId.size() > 0 && data.tableId.size() <= 50 &&
+             data.tableNumber is string && data.tableNumber.size() > 0 && data.tableNumber.size() <= 20 &&
+             data.subtotalAmount is number && data.subtotalAmount >= 0 &&
+             data.netAmount is number && data.netAmount >= 0 &&
+             data.status in ['DRAFT', 'ISSUED', 'PAID', 'CANCELLED'] &&
+             isValidOptionalString('invoiceNumber', 1, 50) &&
+             isValidOptionalString('customerId', 1, 60) &&
+             isValidOptionalString('customerName', 1, 100) &&
+             isValidOptionalString('customerPhone', 1, 25) &&
+             isValidOptionalString('pdfUrl', 5, 500);
+    }
+
+    function isValidPayment(data) {
+      return hasRequiredFields(['paymentId', 'restaurantId', 'invoiceId', 'tableSessionId', 'amount', 'paymentMethod', 'status']) &&
+             data.paymentId is string && data.paymentId.size() > 0 && data.paymentId.size() <= 60 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.invoiceId is string && data.invoiceId.size() > 0 && data.invoiceId.size() <= 60 &&
+             data.tableSessionId is string && data.tableSessionId.size() > 0 && data.tableSessionId.size() <= 50 &&
+             data.amount is number && data.amount > 0 &&
+             data.paymentMethod in ['CASH', 'UPI', 'CARD', 'RAZORPAY'] &&
+             data.status in ['PENDING', 'PROCESSING', 'PAID', 'FAILED', 'REFUNDED', 'CANCELLED'] &&
+             isValidOptionalString('transactionReference', 1, 100) &&
+             isValidOptionalString('verifiedByUserId', 1, 128);
+    }
+
+    function isValidRefund(data) {
+      return hasRequiredFields(['refundId', 'restaurantId', 'paymentId', 'amount', 'reason', 'status']) &&
+             data.refundId is string && data.refundId.size() > 0 && data.refundId.size() <= 60 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.paymentId is string && data.paymentId.size() > 0 && data.paymentId.size() <= 60 &&
+             data.amount is number && data.amount > 0 &&
+             data.reason is string && data.reason.size() > 0 && data.reason.size() <= 300 &&
+             data.status in ['REQUESTED', 'PROCESSED', 'REJECTED'] &&
+             isValidOptionalString('approvedByUserId', 1, 128);
+    }
+
+    function isValidNotification(data) {
+      return hasRequiredFields(['notificationId', 'restaurantId', 'recipientRole', 'title', 'message', 'type', 'isRead']) &&
+             data.notificationId is string && data.notificationId.size() > 0 && data.notificationId.size() <= 60 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.recipientRole in ['owner', 'admin', 'counter', 'waiter', 'kitchen', 'customer', 'all'] &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 100 &&
+             data.message is string && data.message.size() > 0 && data.message.size() <= 300 &&
+             data.type in ['ORDER', 'CALL', 'BILL', 'FOOD_READY', 'PAYMENT'] &&
+             data.isRead is bool &&
+             isValidOptionalString('recipientUserId', 1, 128);
+    }
+
+    function isValidNotificationEvent(data) {
+      return hasRequiredFields(['eventId', 'restaurantId', 'eventType']) &&
+             data.eventId is string && data.eventId.size() > 0 && data.eventId.size() <= 60 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.eventType in ['NEW_ORDER', 'CALL_WAITER', 'ORDER_READY', 'REQUEST_BILL', 'PAYMENT_RECEIVED'] &&
+             isValidOptionalString('spokenText', 0, 300) &&
+             isValidOptionalString('language', 1, 10);
+    }
+
+    function isValidAuditLog(data) {
+      return hasRequiredFields(['logId', 'restaurantId', 'eventType']) &&
+             data.logId is string && data.logId.size() > 0 && data.logId.size() <= 60 &&
+             data.restaurantId is string && data.restaurantId.size() > 0 && data.restaurantId.size() <= 50 &&
+             data.eventType is string && data.eventType.size() > 0 && data.eventType.size() <= 100 &&
+             isValidOptionalString('userId', 1, 128) &&
+             isValidOptionalString('username', 1, 100) &&
+             isValidOptionalString('role', 1, 50) &&
+             isValidOptionalString('ipAddress', 1, 50);
+    }
+
+    // ===============================================================
+    // Collection Security Rules (27 Collections)
+    // ===============================================================
+
+    // 1. Restaurant Core Profile
+    match /restaurants/{restaurantId} {
+      allow read: if true;
+      allow create: if isAuthenticated() &&
+                       isValidRestaurant(request.resource.data) &&
+                       (hasRole('master_admin') || (hasRole('owner') && (getUserData().restaurantId == restaurantId || getUserData().restaurantId == '')));
+      allow update: if isAuthenticated() &&
+                       isValidRestaurant(request.resource.data) &&
+                       areImmutableFieldsUnchanged(['restaurantId', 'createdAt']) &&
+                       (hasRole('master_admin') || (hasRole('owner') && getUserData().restaurantId == restaurantId));
+      allow delete: if hasRole('master_admin');
+    }
+
+    // 2. User Profiles & RBAC
+    match /users/{userId} {
+      // PII Protection: Users can only read their own profile; owner/admin can read staff profiles
+      allow read: if isAuthenticated() &&
+                     (request.auth.uid == userId || isOwnerOrAdminOf(resource.data.restaurantId));
+      
+      // Self registration permitted only as customer; staff account creation strictly owner/admin
+      allow create: if isAuthenticated() &&
+                       isValidUser(request.resource.data) &&
+                       (
+                         (request.auth.uid == userId && request.resource.data.role == 'customer') ||
+                         isOwnerOrAdminOf(request.resource.data.restaurantId) ||
+                         hasRole('master_admin')
+                       );
+
+      // Self-update cannot modify role or restaurantId (Prevents privilege escalation)
+      allow update: if isAuthenticated() &&
+                       isValidUser(request.resource.data) &&
+                       (
+                         (request.auth.uid == userId && areImmutableFieldsUnchanged(['role', 'userId', 'restaurantId', 'createdAt'])) ||
+                         (isOwnerOrAdminOf(resource.data.restaurantId) && areImmutableFieldsUnchanged(['userId', 'createdAt']) && (getUserRole() == 'master_admin' || request.resource.data.role != 'master_admin')) ||
+                         hasRole('master_admin')
+                       );
+
+      allow delete: if hasRole('master_admin') || (isOwnerOrAdminOf(resource.data.restaurantId) && request.auth.uid != userId);
+    }
+
+    // 3. Staff Profiles
+    match /staff/{staffId} {
+      allow read: if isStaffOf(resource.data.restaurantId);
+      allow create: if isOwnerOrAdminOf(request.resource.data.restaurantId) &&
+                       isValidStaff(request.resource.data);
+      allow update: if isOwnerOrAdminOf(resource.data.restaurantId) &&
+                       isValidStaff(request.resource.data) &&
+                       areImmutableFieldsUnchanged(['staffId', 'restaurantId', 'userId', 'createdAt']);
+      allow delete: if isOwnerOrAdminOf(resource.data.restaurantId);
+    }
+
+    // 4. Staff Roles & Role Permissions
+    match /staffRoles/{roleId} {
+      allow read: if isStaff();
+      allow write: if isOwnerOrAdmin();
+    }
+
+    match /rolePermissions/{permissionId} {
+      allow read: if isStaff();
+      allow write: if isOwnerOrAdmin();
+    }
+
+    // 5. Restaurant Floor Tables
+    match /restaurantTables/{tableId} {
+      allow read: if true;
+      allow create: if isOwnerOrAdminOf(request.resource.data.restaurantId) &&
+                       isValidTable(request.resource.data);
+      allow update: if isValidTable(request.resource.data) &&
+                       (
+                         isOwnerOrAdminOf(resource.data.restaurantId) ||
+                         (
+                           isStaffOf(resource.data.restaurantId) &&
+                           areImmutableFieldsUnchanged(['tableId', 'restaurantId', 'tableNumber', 'seatingCapacity', 'floorArea', 'createdAt'])
+                         )
+                       );
+      allow delete: if isOwnerOrAdminOf(resource.data.restaurantId);
+    }
+
+    // 6. Cryptographic QR Tokens
+    match /qrTokens/{tokenId} {
+      allow read: if true;
+      allow create: if isOwnerOrAdminOf(request.resource.data.restaurantId) &&
+                       isValidQRToken(request.resource.data);
+      allow update: if isOwnerOrAdminOf(resource.data.restaurantId) &&
+                       isValidQRToken(request.resource.data) &&
+                       areImmutableFieldsUnchanged(['tokenId', 'restaurantId', 'tableId', 'tableNumber', 'tokenHash', 'createdAt']);
+      allow delete: if isOwnerOrAdminOf(resource.data.restaurantId);
+    }
+
+    // 7. Table Sessions
+    match /tableSessions/{sessionId} {
+      // Diners verify active sessions on the table; staff inspect all sessions
+      allow read: if isStaffOf(resource.data.restaurantId) ||
+                     resource.data.status in ['ACTIVE', 'PAYMENT_PENDING'] ||
+                     (isAuthenticated() && resource.data.customerId == request.auth.uid);
+      
+      // Initial session creation allowed for valid table session
+      allow create: if isValidTableSession(request.resource.data) &&
+                       request.resource.data.status == 'ACTIVE' &&
+                       request.resource.data.totalAmount == 0;
+
+      // Update allowed for status transitions
+      allow update: if isValidTableSession(request.resource.data) &&
+                       areImmutableFieldsUnchanged(['sessionId', 'restaurantId', 'tableId', 'tableNumber', 'qrTokenId', 'sessionToken', 'createdAt', 'openedAt']) &&
+                       (
+                         isStaffOf(resource.data.restaurantId) ||
+                         (resource.data.status == 'ACTIVE' && request.resource.data.status in ['ACTIVE', 'PAYMENT_PENDING'])
+                       );
+
+      allow delete: if isOwnerOrAdminOf(resource.data.restaurantId);
+    }
+
+    // 8. Menu Categories, Items & Add-ons
+    match /menuCategories/{categoryId} {
+      allow read: if true;
+      allow create: if isOwnerOrAdminOf(request.resource.data.restaurantId) &&
+                       isValidMenuCategory(request.resource.data);
+      allow update: if isOwnerOrAdminOf(resource.data.restaurantId) &&
+                       isValidMenuCategory(request.resource.data) &&
+                       areImmutableFieldsUnchanged(['categoryId', 'restaurantId', 'createdAt']);
+      allow delete: if isOwnerOrAdminOf(resource.data.restaurantId);
+    }
+
+    match /menuItems/{itemId} {
+      allow read: if true;
+      allow create: if isOwnerOrAdminOf(request.resource.data.restaurantId) &&
+                       isValidMenuItem(request.resource.data);
+      allow update: if isOwnerOrAdminOf(resource.data.restaurantId) &&
+                       isValidMenuItem(request.resource.data) &&
+                       areImmutableFieldsUnchanged(['itemId', 'restaurantId', 'createdAt']);
+      allow delete: if isOwnerOrAdminOf(resource.data.restaurantId);
+    }
+
+    match /menuAddons/{addonId} {
+      allow read: if true;
+      allow create: if isOwnerOrAdminOf(request.resource.data.restaurantId) &&
+                       isValidMenuAddon(request.resource.data);
+      allow update: if isOwnerOrAdminOf(resource.data.restaurantId) &&
+                       isValidMenuAddon(request.resource.data) &&
+                       areImmutableFieldsUnchanged(['addonId', 'restaurantId', 'createdAt']);
+      allow delete: if isOwnerOrAdminOf(resource.data.restaurantId);
+    }
+
+    // 9. Kitchen Stations
+    match /kitchenStations/{stationId} {
+      allow read: if true;
+      allow create: if isOwnerOrAdminOf(request.resource.data.restaurantId) &&
+                       isValidKitchenStation(request.resource.data);
+      allow update: if isOwnerOrAdminOf(resource.data.restaurantId) &&
+                       isValidKitchenStation(request.resource.data) &&
+                       areImmutableFieldsUnchanged(['stationId', 'restaurantId']);
+      allow delete: if isOwnerOrAdminOf(resource.data.restaurantId);
+    }
+
+    // 10. Orders
+    match /orders/{orderId} {
+      allow read: if isStaffOf(resource.data.restaurantId) ||
+                     (resource.data.tableSessionId is string && resource.data.tableSessionId.size() > 0);
+      
+      // Order submission allowed with valid initial state
+      allow create: if isValidOrder(request.resource.data) &&
+                       request.resource.data.status in ['NEW', 'PLACED'] &&
+                       request.resource.data.paymentStatus == 'UNPAID';
+
+      // Updates strictly restricted to staff; price fields are immutable after creation
+      allow update: if isValidOrder(request.resource.data) &&
+                       isStaffOf(resource.data.restaurantId) &&
+                       areImmutableFieldsUnchanged(['orderId', 'restaurantId', 'tableSessionId', 'tableId', 'tableNumber', 'subtotalAmount', 'cgstAmount', 'sgstAmount', 'discountAmount', 'totalAmount', 'itemCount', 'createdAt']) &&
+                       (
+                         request.resource.data.paymentStatus == resource.data.paymentStatus ||
+                         ((isCounterOf(resource.data.restaurantId) || isOwnerOrAdminOf(resource.data.restaurantId)) && request.resource.data.paymentStatus in ['UNPAID', 'PAID'])
+                       );
+
+      allow delete: if false; // Orders cannot be deleted; cancel status required
+    }
+
+    // 11. Order Items (Atomic item entries)
+    match /orderItems/{orderItemId} {
+      allow read: if isStaffOf(resource.data.restaurantId) ||
+                     (resource.data.orderId is string && resource.data.orderId.size() > 0);
+      allow create: if isValidOrderItem(request.resource.data);
+      allow update: if false; // Order items are strictly immutable once placed
+      allow delete: if false;
+    }
+
+    // 12. Order Status Audit History
+    match /orderStatusHistory/{historyId} {
+      allow read: if isStaffOf(resource.data.restaurantId);
+      allow create: if isValidOrderStatusHistory(request.resource.data);
+      allow update: if false; // Append-only audit
+      allow delete: if false;
+    }
+
+    // 13. Kitchen Fulfillment Tickets
+    match /kitchenTickets/{ticketId} {
+      allow read: if isKitchenOf(resource.data.restaurantId) ||
+                     isWaiterOf(resource.data.restaurantId) ||
+                     isOwnerOrAdminOf(resource.data.restaurantId);
+
+      allow create: if isValidKitchenTicket(request.resource.data) &&
+                       request.resource.data.status in ['NEW', 'ACCEPTED'];
+
+      // Status updates partitioned by staff role: kitchen staff prepare, waiters handover/serve
+      allow update: if isValidKitchenTicket(request.resource.data) &&
+                       areImmutableFieldsUnchanged(['ticketId', 'restaurantId', 'orderId', 'stationId', 'createdAt']) &&
+                       (
+                         ((isKitchenOf(resource.data.restaurantId) || isOwnerOrAdminOf(resource.data.restaurantId)) && request.resource.data.status in ['ACCEPTED', 'PREPARING', 'READY', 'READY_FOR_HANDOVER', 'REJECTED']) ||
+                         ((isWaiterOf(resource.data.restaurantId) || isOwnerOrAdminOf(resource.data.restaurantId)) && request.resource.data.status in ['PICKED_UP', 'SERVED', 'HANDED_OVER'])
+                       );
+
+      allow delete: if false;
+    }
+
+    match /kitchenTicketItems/{ticketItemId} {
+      allow read: if isKitchenOf(resource.data.restaurantId) ||
+                     isWaiterOf(resource.data.restaurantId) ||
+                     isOwnerOrAdminOf(resource.data.restaurantId);
+      allow create: if isValidKitchenTicketItem(request.resource.data);
+      allow update, delete: if isOwnerOrAdminOf(resource.data.restaurantId);
+    }
+
+    // 14. Waiter Calling & Floor Requests
+    match /waiterCalls/{callId} {
+      allow read: if isStaffOf(resource.data.restaurantId) ||
+                     (resource.data.tableSessionId is string && resource.data.tableSessionId.size() > 0);
+
+      allow create: if isValidWaiterCall(request.resource.data) &&
+                       request.resource.data.status == 'REQUESTED';
+
+      allow update: if isValidWaiterCall(request.resource.data) &&
+                       areImmutableFieldsUnchanged(['callId', 'restaurantId', 'tableId', 'tableSessionId', 'createdAt']) &&
+                       (
+                         isWaiterOf(resource.data.restaurantId) ||
+                         isOwnerOrAdminOf(resource.data.restaurantId) ||
+                         (resource.data.status == 'REQUESTED' && request.resource.data.status == 'CANCELLED')
+                       );
+
+      allow delete: if false;
+    }
+
+    // 15. Waiter Table Assignments
+    match /waiterAssignments/{assignmentId} {
+      allow read: if isStaffOf(resource.data.restaurantId);
+      allow create: if isOwnerOrAdminOf(request.resource.data.restaurantId) &&
+                       isValidWaiterAssignment(request.resource.data);
+      allow update: if isOwnerOrAdminOf(resource.data.restaurantId) &&
+                       isValidWaiterAssignment(request.resource.data) &&
+                       areImmutableFieldsUnchanged(['assignmentId', 'restaurantId', 'createdAt']);
+      allow delete: if isOwnerOrAdminOf(resource.data.restaurantId);
+    }
+
+    // 16. Service Requests
+    match /serviceRequests/{requestId} {
+      allow read: if isStaffOf(resource.data.restaurantId) ||
+                     (resource.data.tableSessionId is string && resource.data.tableSessionId.size() > 0);
+      allow create: if isValidServiceRequest(request.resource.data) &&
+                       request.resource.data.status in ['PENDING', 'REQUESTED', 'NEW'];
+      allow update: if isStaffOf(resource.data.restaurantId) &&
+                       isValidServiceRequest(request.resource.data) &&
+                       areImmutableFieldsUnchanged(['requestId', 'restaurantId', 'tableSessionId', 'createdAt']);
+      allow delete: if isOwnerOrAdminOf(resource.data.restaurantId);
+    }
+
+    // 17. Customers & Loyalty Profiles
+    match /customers/{customerId} {
+      allow read: if isStaffOf(resource.data.restaurantId) ||
+                     (isAuthenticated() && (request.auth.uid == customerId || (hasUserDoc() && getUserData().phone == resource.data.phone)));
+      
+      allow create: if isValidCustomer(request.resource.data) &&
+                       (
+                         isStaffOf(request.resource.data.restaurantId) ||
+                         (isAuthenticated() && request.auth.uid == customerId)
+                       );
+
+      allow update: if isValidCustomer(request.resource.data) &&
+                       areImmutableFieldsUnchanged(['customerId', 'restaurantId', 'createdAt']) &&
+                       (
+                         isStaffOf(resource.data.restaurantId) ||
+                         (isAuthenticated() && request.auth.uid == customerId)
+                       );
+
+      allow delete: if isOwnerOrAdminOf(resource.data.restaurantId);
+    }
+
+    // 18. Invoices & Billing
+    match /invoices/{invoiceId} {
+      allow read: if isCounterOf(resource.data.restaurantId) ||
+                     isOwnerOrAdminOf(resource.data.restaurantId) ||
+                     (resource.data.tableSessionId is string && resource.data.tableSessionId.size() > 0);
+
+      allow create: if isValidInvoice(request.resource.data) &&
+                       (isCounterOf(request.resource.data.restaurantId) || isOwnerOrAdminOf(request.resource.data.restaurantId)) &&
+                       request.resource.data.status in ['DRAFT', 'ISSUED'];
+
+      allow update: if isValidInvoice(request.resource.data) &&
+                       (isCounterOf(resource.data.restaurantId) || isOwnerOrAdminOf(resource.data.restaurantId)) &&
+                       areImmutableFieldsUnchanged(['invoiceId', 'restaurantId', 'tableSessionId', 'createdAt']);
+
+      allow delete: if false; // Invoices are tax compliance records; cancellation allowed only via status update
+    }
+
+    // 19. Payments
+    match /payments/{paymentId} {
+      allow read: if isCounterOf(resource.data.restaurantId) ||
+                     isOwnerOrAdminOf(resource.data.restaurantId);
+
+      allow create: if isValidPayment(request.resource.data) &&
+                       (isCounterOf(request.resource.data.restaurantId) || isOwnerOrAdminOf(request.resource.data.restaurantId)) &&
+                       request.resource.data.status in ['PENDING', 'PROCESSING', 'PAID'];
+
+      // Once marked PAID, payment record is strictly immutable!
+      allow update: if isValidPayment(request.resource.data) &&
+                       (isCounterOf(resource.data.restaurantId) || isOwnerOrAdminOf(resource.data.restaurantId)) &&
+                       resource.data.status != 'PAID' &&
+                       areImmutableFieldsUnchanged(['paymentId', 'restaurantId', 'invoiceId', 'tableSessionId', 'amount', 'paymentMethod', 'createdAt']);
+
+      allow delete: if false; // Financial payments cannot be deleted
+    }
+
+    // 20. Refunds
+    match /refunds/{refundId} {
+      allow read: if isOwnerOrAdminOf(resource.data.restaurantId);
+      allow create: if isOwnerOrAdminOf(request.resource.data.restaurantId) &&
+                       isValidRefund(request.resource.data) &&
+                       request.resource.data.status in ['REQUESTED', 'PROCESSED'];
+      allow update: if isOwnerOrAdminOf(resource.data.restaurantId) &&
+                       isValidRefund(request.resource.data) &&
+                       areImmutableFieldsUnchanged(['refundId', 'restaurantId', 'paymentId', 'amount', 'createdAt']);
+      allow delete: if false;
+    }
+
+    // 21. Realtime Push Notifications & Voice Events
+    match /notifications/{notificationId} {
+      allow read: if (resource.data.recipientRole == 'all' && isStaffOf(resource.data.restaurantId)) ||
+                     (isStaffOf(resource.data.restaurantId) && (getUserRole() == resource.data.recipientRole || isOwnerOrAdminOf(resource.data.restaurantId))) ||
+                     (isAuthenticated() && resource.data.recipientUserId == request.auth.uid);
+
+      allow create: if isValidNotification(request.resource.data) &&
+                       isStaffOf(request.resource.data.restaurantId);
+
+      allow update: if isValidNotification(request.resource.data) &&
+                       (
+                         isOwnerOrAdminOf(resource.data.restaurantId) ||
+                         (
+                           areImmutableFieldsUnchanged(['notificationId', 'restaurantId', 'recipientRole', 'recipientUserId', 'title', 'message', 'type', 'createdAt']) &&
+                           request.resource.data.isRead is bool
+                         )
+                       );
+
+      allow delete: if isOwnerOrAdminOf(resource.data.restaurantId);
+    }
+
+    match /notificationEvents/{eventId} {
+      allow read: if isStaffOf(resource.data.restaurantId);
+      allow create: if isValidNotificationEvent(request.resource.data) &&
+                       isStaffOf(request.resource.data.restaurantId);
+      allow update, delete: if isOwnerOrAdminOf(resource.data.restaurantId);
+    }
+
+    // 22. Security Audit Logs
+    match /auditLogs/{logId} {
+      // Strictly restricted to owner or master_admin
+      allow read: if hasRole('master_admin') ||
+                     (hasRole('owner') && (getUserData().restaurantId == resource.data.restaurantId || getUserData().restaurantId == ''));
+
+      // Append-only creation
+      allow create: if isValidAuditLog(request.resource.data);
+
+      allow update: if false; // Immutable audit log
+      allow delete: if false; // Deletion strictly forbidden
+    }
+
+  }
+}

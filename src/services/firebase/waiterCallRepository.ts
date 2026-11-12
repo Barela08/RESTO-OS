@@ -65,17 +65,17 @@ export class WaiterCallRepository {
     const callId = `call-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
     const callRef = doc(db, 'waiterCalls', callId);
 
-    const callPayload: FirestoreWaiterCall = {
+    const callPayload: any = {
       callId,
       restaurantId: input.restaurantId,
       tableId: input.tableId,
       tableNumber: input.tableNumber,
       tableSessionId: input.tableSessionId,
-      customerId: input.customerId,
+      customerId: input.customerId || null,
       customerName: input.customerName || 'Mobile Diner',
-      customerPhone: input.customerPhone,
+      customerPhone: input.customerPhone || null,
       requestType: input.requestType,
-      requestMessage: input.requestMessage,
+      requestMessage: input.requestMessage || null,
       priority: input.priority || 'NORMAL',
       status: 'REQUESTED',
       assignedWaiterId: input.assignedWaiterId || 'st-wtr-01',

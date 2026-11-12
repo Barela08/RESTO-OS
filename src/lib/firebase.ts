@@ -31,7 +31,7 @@ const appId: string = (import.meta.env.VITE_FIREBASE_APP_ID as string) || '';
 const measurementId: string = (import.meta.env.VITE_FIREBASE_MEASUREMENT_ID as string) || '';
 const databaseURL: string =
   (import.meta.env.VITE_FIREBASE_DATABASE_URL as string) ||
-  (projectId ? `https://${projectId}-default-rtdb.firebaseio.com` : '');
+  (projectId ? `https://${projectId}-default-rtdb.asia-southeast1.firebasedatabase.app` : '');
 const vapidKey: string = (import.meta.env.VITE_FIREBASE_VAPID_KEY as string) || '';
 
 export const firebaseConfig: FirebaseConfigOptions = {

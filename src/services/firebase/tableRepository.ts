@@ -93,6 +93,13 @@ export class TableRepository {
       return { valid: false, message: 'Database not initialized' };
     }
 
+    if (!tokenHash || typeof tokenHash !== 'string' || !tokenHash.trim()) {
+      return {
+        valid: false,
+        message: 'Invalid or expired QR token. Please contact restaurant staff.',
+      };
+    }
+
     try {
       const tokensRef = collection(db, 'qrTokens');
       const q = query(
@@ -164,7 +171,10 @@ export class TableRepository {
         message: 'Table session active. You can start dining and ordering.',
       };
     } catch (err: any) {
-      return { valid: false, message: err.message || 'QR verification failed.' };
+      return {
+        valid: false,
+        message: 'Invalid or expired QR token. Please contact restaurant staff.',
+      };
     }
   }
 

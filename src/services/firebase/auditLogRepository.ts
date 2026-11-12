@@ -36,13 +36,13 @@ export class AuditLogRepository {
       const logId = `log-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
       const logRef = doc(db, 'auditLogs', logId);
 
-      const payload: FirestoreAuditLog = {
+      const payload: any = {
         logId,
         restaurantId: params.restaurantId,
         eventType: params.eventType,
-        userId: params.userId,
-        username: params.username,
-        role: params.role,
+        userId: params.userId || null,
+        username: params.username || null,
+        role: params.role || null,
         ipAddress: params.ipAddress || 'client',
         details: params.details || {},
         createdAt: serverTimestamp(),
