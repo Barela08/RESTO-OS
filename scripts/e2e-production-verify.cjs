@@ -1,7 +1,6 @@
 const ws = require('ws');
 global.WebSocket = ws;
 const { createClient } = require('@supabase/supabase-js');
-const { executeSql } = require('./query-helper.cjs');
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'https://mklcrcyubohgfosgxmrm.supabase.co';
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_7lji58Dx7rNxfkuAi4Diew_RZk-8Yn6';
@@ -58,24 +57,21 @@ async function runE2EVerification() {
   // TEST B: Customer Profile Restoration
   try {
     console.log('\n[TEST B] Customer Profile Restoration');
-    const res = await executeSql(`
-      SELECT id, full_name, phone, email
-      FROM customers
-      WHERE phone = '9876543210'
-      LIMIT 1;
-    `);
+    const { data: custData, error: custErr } = await supabase
+      .from('customers')
+      .upsert({
+        restaurant_id: 'rest-001-main',
+        full_name: 'Nilu Barela',
+        phone: '9876543210',
+        email: 'nilu@test.com',
+        is_phone_verified: true,
+      }, { onConflict: 'restaurant_id,phone' })
+      .select()
+      .single();
 
-    if (res.rows.length === 0) {
-      await executeSql(`
-        INSERT INTO customers (id, restaurant_id, full_name, phone, email, is_phone_verified)
-        VALUES ('cust-e2e-demo', 'rest-001-main', 'Nilu Barela', '9876543210', 'nilu@test.com', true)
-        ON CONFLICT (phone) DO UPDATE SET full_name = EXCLUDED.full_name;
-      `);
-    }
-
-    const cust = (await executeSql(`SELECT id, full_name, phone FROM customers WHERE phone = '9876543210'`)).rows[0];
-    console.log('  ✓ Customer profile retrieved: Name =', cust.full_name, 'Phone =', cust.phone);
-    results.push({ test: 'TEST B: Customer Profile Restoration', passed: true, details: `Verified customer ${cust.full_name} (${cust.phone})` });
+    if (custErr) throw custErr;
+    console.log('  ✓ Customer profile retrieved: Name =', custData.full_name, 'Phone =', custData.phone);
+    results.push({ test: 'TEST B: Customer Profile Restoration', passed: true, details: `Verified customer ${custData.full_name} (${custData.phone})` });
   } catch (err) {
     console.error('  ✗ TEST B Failed:', err.message);
     results.push({ test: 'TEST B: Customer Profile Restoration', passed: false, error: err.message });
@@ -262,24 +258,39 @@ async function runE2EVerification() {
     results.push({ test: 'TEST G: Reconnection & Deduplication', passed: false, error: err.message });
   }
 
-  // TEST H: Cash Counter Settlement & Table Clearing
+  // TEST H: Cash Counter Payment Settlement & Table Lifecycle
   try {
     console.log('\n[TEST H] Cash Counter Payment Settlement & Table Lifecycle');
-    const payRes = await executeSql(`
-      INSERT INTO payments (
-        restaurant_id, table_session_id, table_id, amount, payment_method, payment_status
-      ) VALUES (
-        'rest-001-main', $1, $2, 362.26, 'CASH', 'PAID'
-      ) RETURNING id, payment_status;
-    `, [activeSessionId, TABLE_5_ID]);
-    console.log('  ✓ Payment settled as PAID: ID =', payRes.rows[0].id);
+    const { data: payData, error: payErr } = await supabase
+      .from('payments')
+      .insert({
+        restaurant_id: 'rest-001-main',
+        table_session_id: activeSessionId,
+        table_id: TABLE_5_ID,
+        amount: 362.26,
+        payment_method: 'CASH',
+        payment_status: 'PAID',
+      })
+      .select()
+      .single();
 
-    // Transition table to CLEANING
-    await executeSql(`UPDATE restaurant_tables SET status = 'CLEANING', updated_at = NOW() WHERE id = $1;`, [TABLE_5_ID]);
+    if (payErr) throw payErr;
+    console.log('  ✓ Payment settled as PAID: ID =', payData.id);
+
+    // Update table to CLEANING
+    const { error: cleanErr } = await supabase
+      .from('restaurant_tables')
+      .update({ status: 'CLEANING', updated_at: new Date().toISOString() })
+      .eq('id', TABLE_5_ID);
+    if (cleanErr) throw cleanErr;
     console.log('  ✓ Table c0000001-0000-0000-0000-000000000005 updated to CLEANING');
 
     // Table cleaned and reset to AVAILABLE
-    await executeSql(`UPDATE restaurant_tables SET status = 'AVAILABLE', updated_at = NOW() WHERE id = $1;`, [TABLE_5_ID]);
+    const { error: availErr } = await supabase
+      .from('restaurant_tables')
+      .update({ status: 'AVAILABLE', updated_at: new Date().toISOString() })
+      .eq('id', TABLE_5_ID);
+    if (availErr) throw availErr;
     console.log('  ✓ Table c0000001-0000-0000-0000-000000000005 cleared and reset to AVAILABLE for new diners');
 
     results.push({ test: 'TEST H: Cash Settlement & Table Lifecycle', passed: true, details: 'Payment PAID -> Table CLEANING -> Table AVAILABLE' });

@@ -168,6 +168,14 @@ class AudioAlertService {
       return false;
     }
   }
+
+  public playOrderReadyChime(customVolume?: number): boolean {
+    return this.playWaiterCallBell(customVolume);
+  }
+
+  public playNewOrderBeep(customVolume?: number): boolean {
+    return this.playNewOrderChime(customVolume);
+  }
 }
 
 export const audioService = new AudioAlertService();

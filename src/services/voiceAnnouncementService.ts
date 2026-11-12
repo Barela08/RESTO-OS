@@ -430,6 +430,17 @@ class VoiceAnnouncementService {
     });
   }
 
+  public speakImmediate(text: string, lang: VoiceLanguage = 'hi') {
+    this.enqueueAnnouncement({
+      id: `imm-${Date.now()}`,
+      text,
+      language: lang,
+      volume: 1.0,
+      rate: 1.0,
+      repeatCount: 1,
+    });
+  }
+
   public testSpeakerSound() {
     audioService.playNewOrderChime();
     setTimeout(() => audioService.playWaiterCallBell(), 500);

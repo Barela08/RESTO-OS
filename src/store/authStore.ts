@@ -9,6 +9,8 @@ import { Profile, StaffRoleType } from '../types';
 import { dbAdapter } from '../services/databaseAdapter';
 import { EdgeFunctionsClient } from '../services/edgeFunctionsClient';
 import { isLiveSupabaseConfigured } from '../services/supabase';
+import { FirebaseAuthService } from '../services/firebase/authService';
+import { isFirebaseConfigured } from '../lib/firebase';
 export { getDashboardForRole } from '../app/guards/RoleBasedGuard';
 
 interface AuthState {
@@ -96,7 +98,54 @@ export const useAuthStore = create<AuthState>((set, get) => {
 
     // Production-ready backend-authoritative login
     loginAsync: async (loginId: string, password: string) => {
-      // 1. If live Supabase is configured, use the Edge Function for backend-authoritative verification
+      // 1. If Firebase is configured, authenticate with Firebase Auth & Firestore
+      if (isFirebaseConfigured()) {
+        try {
+          const fbRes = await FirebaseAuthService.signInStaff(loginId, password);
+          if (fbRes.success && fbRes.profile) {
+            const prof: Profile = {
+              id: fbRes.profile.userId,
+              restaurant_id: fbRes.profile.restaurantId,
+              email: fbRes.profile.email,
+              username: fbRes.profile.username,
+              full_name: fbRes.profile.fullName,
+              phone: fbRes.profile.phone || '',
+              role_id: fbRes.profile.role as StaffRoleType,
+              is_active: true,
+              created_at: new Date().toISOString(),
+            };
+
+            const token = await fbRes.user?.getIdToken() || `fb_sess_${prof.id}`;
+            const sessionData = {
+              profileId: prof.id,
+              token,
+              role: prof.role_id,
+              username: prof.username || prof.email,
+              loginAt: new Date().toISOString(),
+            };
+
+            safeStorage.set('resto_staff_session', JSON.stringify(sessionData));
+            safeStorage.set('resto_auth_profile', JSON.stringify(prof));
+            safeStorage.set('resto_active_role', prof.role_id);
+
+            set({
+              currentProfile: prof,
+              role: prof.role_id,
+              token,
+              isAuthenticated: true,
+            });
+
+            return {
+              success: true,
+              role: prof.role_id,
+            };
+          }
+        } catch (fbErr) {
+          console.warn('[Firebase Auth] Falling back to local/Supabase adapter:', fbErr);
+        }
+      }
+
+      // 2. If live Supabase is configured, use the Edge Function for backend-authoritative verification
       if (isLiveSupabaseConfigured()) {
         const edgeRes = await EdgeFunctionsClient.staffAuth({ loginId, password });
         if (edgeRes.success && edgeRes.data) {
@@ -263,6 +312,7 @@ export const useAuthStore = create<AuthState>((set, get) => {
     },
 
     logout: () => {
+      FirebaseAuthService.signOutStaff().catch(() => {});
       const current = get().currentProfile;
       if (current) {
         dbAdapter.recordSecurityEvent({
