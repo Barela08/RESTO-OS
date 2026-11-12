@@ -307,6 +307,7 @@ export interface FirestoreWaiterCall {
   onTheWayAt?: Timestamp | FieldValue | string;
   arrivedAt?: Timestamp | FieldValue | string;
   completedAt?: Timestamp | FieldValue | string;
+  cancelledAt?: Timestamp | FieldValue | string;
   createdAt: Timestamp | FieldValue | string;
   updatedAt?: Timestamp | FieldValue | string;
 }
@@ -383,6 +384,7 @@ export interface FirestorePayment {
   verifiedByUserId?: string;
   createdAt: Timestamp | FieldValue | string;
   completedAt?: Timestamp | FieldValue | string;
+  cancelledAt?: Timestamp | FieldValue | string;
 }
 
 export interface FirestoreRefund {

@@ -762,14 +762,13 @@ service cloud.firestore {
                      (resource.data.tableSessionId is string && resource.data.tableSessionId.size() > 0);
 
       allow create: if isValidWaiterCall(request.resource.data) &&
-                       request.resource.data.status == 'REQUESTED';
+                       request.resource.data.status in ['PENDING', 'REQUESTED'];
 
       allow update: if isValidWaiterCall(request.resource.data) &&
                        areImmutableFieldsUnchanged(['callId', 'restaurantId', 'tableId', 'tableSessionId', 'createdAt']) &&
                        (
-                         isWaiterOf(resource.data.restaurantId) ||
-                         isOwnerOrAdminOf(resource.data.restaurantId) ||
-                         (resource.data.status == 'REQUESTED' && request.resource.data.status == 'CANCELLED')
+                         isStaffOf(resource.data.restaurantId) ||
+                         (resource.data.status in ['PENDING', 'REQUESTED'] && request.resource.data.status == 'CANCELLED')
                        );
 
       allow delete: if false;

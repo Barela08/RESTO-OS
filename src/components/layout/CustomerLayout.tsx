@@ -6,6 +6,7 @@ import { useCustomerAuthStore } from '../../store/customerAuthStore';
 import { dbAdapter } from '../../services/databaseAdapter';
 import { formatCurrency } from '../../utils/currency';
 import { WaiterCall } from '../../types';
+import { WaiterCallRepository, mapFirestoreCallToWaiterCall } from '../../services/firebase/waiterCallRepository';
 import {
   Home,
   UtensilsCrossed,
@@ -48,6 +49,7 @@ export const CustomerLayout: React.FC<{ children: React.ReactNode }> = ({ childr
   const [assistanceType, setAssistanceType] = useState<'CALL_WAITER' | 'REQUEST_BILL' | 'WATER'>('CALL_WAITER');
   const [assistanceSent, setAssistanceSent] = useState(false);
   const [assistanceNotes, setAssistanceNotes] = useState('');
+  const [isSubmittingAssistance, setIsSubmittingAssistance] = useState(false);
 
   // Table Session Security Modal (view-only / guidance)
   const [isTableModalOpen, setIsTableModalOpen] = useState(false);
@@ -69,13 +71,39 @@ export const CustomerLayout: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     };
     checkActiveCall();
-    return dbAdapter.subscribe(checkActiveCall);
-  }, [currentSession]);
+    const unsubLocal = dbAdapter.subscribe(checkActiveCall);
+
+    let unsubFirestore = () => {};
+    if (currentSession) {
+      const restaurantId = currentSession.restaurant_id || restaurant?.id || 'rest-001-main';
+      unsubFirestore = WaiterCallRepository.subscribeToCallForSession(
+        restaurantId,
+        currentSession.id,
+        (firestoreCall) => {
+          if (firestoreCall) {
+            const mapped = mapFirestoreCallToWaiterCall(firestoreCall);
+            dbAdapter.syncFirestoreWaiterCalls([mapped]);
+            setActiveCall(mapped);
+          } else {
+            setActiveCall(dbAdapter.getActiveWaiterCallForSession(currentSession.id));
+          }
+        },
+        (err) => {
+          console.warn('[CustomerLayout] Waiter call subscription notice:', err);
+        }
+      );
+    }
+
+    return () => {
+      unsubLocal();
+      unsubFirestore();
+    };
+  }, [currentSession, restaurant?.id]);
 
   const itemCount = getItemCount();
   const cartTotal = getTotal();
 
-  const handleSendAssistance = () => {
+  const handleSendAssistance = async () => {
     if (!currentSession) {
       setIsTableModalOpen(true);
       return;
@@ -85,17 +113,30 @@ export const CustomerLayout: React.FC<{ children: React.ReactNode }> = ({ childr
       setIsAssistanceModalOpen(false);
       return;
     }
-    dbAdapter.createServiceRequest({
-      tableSessionId: currentSession.id,
-      requestType: assistanceType,
-      notes: assistanceNotes || undefined,
-    });
-    setAssistanceSent(true);
-    setTimeout(() => {
-      setAssistanceSent(false);
-      setIsAssistanceModalOpen(false);
-      setAssistanceNotes('');
-    }, 1800);
+    setIsSubmittingAssistance(true);
+    try {
+      await dbAdapter.createServiceRequestAsync({
+        tableSessionId: currentSession.id,
+        requestType: assistanceType,
+        notes: assistanceNotes || undefined,
+      });
+      setAssistanceSent(true);
+      setTimeout(() => {
+        setAssistanceSent(false);
+        setIsAssistanceModalOpen(false);
+        setAssistanceNotes('');
+      }, 1800);
+    } catch (err: any) {
+      console.error('[CustomerLayout] Failed to send assistance alert:', err);
+      setAssistanceSent(true);
+      setTimeout(() => {
+        setAssistanceSent(false);
+        setIsAssistanceModalOpen(false);
+        setAssistanceNotes('');
+      }, 1800);
+    } finally {
+      setIsSubmittingAssistance(false);
+    }
   };
 
   const handleCancelCall = (callId: string) => {
@@ -685,9 +726,11 @@ export const CustomerLayout: React.FC<{ children: React.ReactNode }> = ({ childr
             <Button
               className="w-full mt-2"
               variant="orange"
+              isLoading={isSubmittingAssistance}
+              disabled={isSubmittingAssistance}
               onClick={handleSendAssistance}
             >
-              Submit Service Alert
+              {isSubmittingAssistance ? 'Contacting Floor Staff...' : 'Submit Service Alert'}
             </Button>
           </div>
         )}

@@ -5,6 +5,7 @@ import { useCartStore } from '../../store/cartStore';
 import { useCustomerAuthStore } from '../../store/customerAuthStore';
 import { dbAdapter } from '../../services/databaseAdapter';
 import { MenuItem, MenuAddon, MenuVariant, WaiterCall } from '../../types';
+import { WaiterCallRepository, mapFirestoreCallToWaiterCall } from '../../services/firebase/waiterCallRepository';
 import { formatCurrency } from '../../utils/currency';
 import { VegNonVegBadge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -69,6 +70,7 @@ export const MenuPage: React.FC = () => {
   const [customerName, setCustomerName] = useState(customer?.full_name || currentSession?.customer_name || '');
   const [customerPhone, setCustomerPhone] = useState(customer?.phone || currentSession?.customer_phone || '');
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  const [isCallingWaiter, setIsCallingWaiter] = useState(false);
 
   // Active waiter call state for current dining session
   const [activeWaiterCall, setActiveWaiterCall] = useState<WaiterCall | undefined>(() =>
@@ -84,18 +86,51 @@ export const MenuPage: React.FC = () => {
       }
     };
     update();
-    return dbAdapter.subscribe(update);
+    const unsubLocal = dbAdapter.subscribe(update);
+
+    let unsubFirestore = () => {};
+    if (currentSession) {
+      const restaurantId = currentSession.restaurant_id || dbAdapter.getRestaurant().id || 'rest-001-main';
+      unsubFirestore = WaiterCallRepository.subscribeToCallForSession(
+        restaurantId,
+        currentSession.id,
+        (firestoreCall) => {
+          if (firestoreCall) {
+            const mapped = mapFirestoreCallToWaiterCall(firestoreCall);
+            dbAdapter.syncFirestoreWaiterCalls([mapped]);
+            setActiveWaiterCall(mapped);
+          } else {
+            setActiveWaiterCall(dbAdapter.getActiveWaiterCallForSession(currentSession.id));
+          }
+        },
+        (err) => {
+          console.warn('[MenuPage] Waiter call subscription notice:', err);
+        }
+      );
+    }
+
+    return () => {
+      unsubLocal();
+      unsubFirestore();
+    };
   }, [currentSession]);
 
-  const handleCallWaiter = () => {
+  const handleCallWaiter = async () => {
     if (!currentSession) {
       alert('Please select or scan a dining table first.');
       return;
     }
-    dbAdapter.requestService({
-      tableSessionId: currentSession.id,
-      requestType: 'CALL_WAITER',
-    });
+    setIsCallingWaiter(true);
+    try {
+      await dbAdapter.requestServiceAsync({
+        tableSessionId: currentSession.id,
+        requestType: 'CALL_WAITER',
+      });
+    } catch (err: any) {
+      console.error('[MenuPage] Failed to call waiter:', err);
+    } finally {
+      setIsCallingWaiter(false);
+    }
   };
 
   // Listen to QR Token in URL
@@ -214,10 +249,12 @@ export const MenuPage: React.FC = () => {
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
                 {activeWaiterCall
-                  ? activeWaiterCall.status === 'PENDING'
+                  ? ['REQUESTED', 'SENT', 'PENDING'].includes(activeWaiterCall.status)
                     ? 'Floor staff notified • Waiter alerted'
-                    : activeWaiterCall.status === 'ACKNOWLEDGED'
-                    ? 'Request accepted • Waiter attending soon'
+                    : ['ACCEPTED', 'ACKNOWLEDGED'].includes(activeWaiterCall.status)
+                    ? `Request accepted by ${activeWaiterCall.assigned_waiter_name || 'Waiter'} • Attending soon`
+                    : activeWaiterCall.status === 'ARRIVED'
+                    ? 'Waiter has arrived at your table!'
                     : 'Waiter is on the way to your table!'
                   : 'Need napkins, water, or order help?'}
               </p>
@@ -227,17 +264,21 @@ export const MenuPage: React.FC = () => {
           <div className="w-full sm:w-auto flex items-center gap-2">
             {activeWaiterCall ? (
               <div className={`w-full sm:w-auto flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl text-xs font-extrabold border ${
-                activeWaiterCall.status === 'IN_PROGRESS'
-                  ? 'bg-green-600 text-white border-green-700 animate-pulse'
-                  : activeWaiterCall.status === 'ACKNOWLEDGED'
+                ['ARRIVED'].includes(activeWaiterCall.status)
+                  ? 'bg-emerald-600 text-white border-emerald-700'
+                  : ['ON_THE_WAY', 'IN_PROGRESS'].includes(activeWaiterCall.status)
+                  ? 'bg-purple-600 text-white border-purple-700 animate-pulse'
+                  : ['ACCEPTED', 'ACKNOWLEDGED'].includes(activeWaiterCall.status)
                   ? 'bg-blue-600 text-white border-blue-700'
                   : 'bg-amber-500 text-white border-amber-600 animate-pulse'
               }`}>
                 <PhoneCall className="w-3.5 h-3.5 flex-shrink-0" />
                 <span>
-                  {activeWaiterCall.status === 'IN_PROGRESS'
+                  {['ARRIVED'].includes(activeWaiterCall.status)
+                    ? 'Waiter Arrived at Table'
+                    : ['ON_THE_WAY', 'IN_PROGRESS'].includes(activeWaiterCall.status)
                     ? 'Waiter On The Way'
-                    : activeWaiterCall.status === 'ACKNOWLEDGED'
+                    : ['ACCEPTED', 'ACKNOWLEDGED'].includes(activeWaiterCall.status)
                     ? 'Call Accepted'
                     : 'Waiter Called'}
                 </span>
@@ -245,10 +286,11 @@ export const MenuPage: React.FC = () => {
             ) : (
               <button
                 onClick={handleCallWaiter}
-                className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-brand-orange hover:bg-orange-600 active:scale-95 text-white text-xs font-extrabold shadow-sm transition-all"
+                disabled={isCallingWaiter}
+                className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-brand-orange hover:bg-orange-600 active:scale-95 disabled:opacity-60 text-white text-xs font-extrabold shadow-sm transition-all"
               >
                 <PhoneCall className="w-3.5 h-3.5" />
-                <span>Call Waiter</span>
+                <span>{isCallingWaiter ? 'Calling Floor Staff...' : 'Call Waiter'}</span>
               </button>
             )}
           </div>

@@ -39,7 +39,9 @@ import {
   Settings,
   Radio,
   Sliders,
+  Shield,
 } from 'lucide-react';
+import { WaiterCallRepository, mapFirestoreCallToWaiterCall } from '../../services/firebase/waiterCallRepository';
 
 export const WaiterDashboard: React.FC = () => {
   const [tables, setTables] = useState<RestaurantTable[]>([]);
@@ -47,14 +49,27 @@ export const WaiterDashboard: React.FC = () => {
   const [waiterCalls, setWaiterCalls] = useState<WaiterCall[]>([]);
   const [readyTickets, setReadyTickets] = useState<KitchenTicket[]>([]);
 
-  // Current authenticated waiter identity
-  const { currentProfile } = useAuthStore();
-  const currentWaiterId = currentProfile?.id || 'st-wtr-1';
+  // Current authenticated waiter identity and supervisory role check
+  const { currentProfile, role } = useAuthStore();
+  const isAdminOrSupervisor =
+    role === 'admin' ||
+    role === 'owner' ||
+    currentProfile?.role_id === 'admin' ||
+    currentProfile?.role_id === 'owner' ||
+    (currentProfile?.id?.startsWith('adm') ?? false) ||
+    (currentProfile?.id?.startsWith('p-adm') ?? false);
 
-  // Navigation & Filtering State
+  const currentWaiterId = currentProfile?.id || 'st-wtr-1';
+  const currentWaiterName = currentProfile?.full_name || (isAdminOrSupervisor ? 'Floor Supervisor' : 'Assigned Waiter');
+
+  // Navigation & Filtering State - Supervisors default to ALL tables and ALL calls
   const [activeTab, setActiveTab] = useState<'ALL' | 'FOOD_TABLES' | 'READY_AT_PASS' | 'SERVICE_CALLS' | 'REWARDS'>('ALL');
-  const [tableFilter, setTableFilter] = useState<'MY_ASSIGNED' | 'ALL'>('MY_ASSIGNED');
-  const [callFilter, setCallFilter] = useState<'MY_CALLS' | 'ALL_CALLS'>('MY_CALLS');
+  const [tableFilter, setTableFilter] = useState<'MY_ASSIGNED' | 'ALL'>(
+    isAdminOrSupervisor ? 'ALL' : 'MY_ASSIGNED'
+  );
+  const [callFilter, setCallFilter] = useState<'MY_CALLS' | 'ALL_CALLS'>(
+    isAdminOrSupervisor ? 'ALL_CALLS' : 'MY_CALLS'
+  );
 
   // Interactive Table Action Modal
   const [selectedTable, setSelectedTable] = useState<RestaurantTable | null>(null);
@@ -77,9 +92,9 @@ export const WaiterDashboard: React.FC = () => {
 
   // Set of call IDs already announced to prevent duplicate audio/voice on re-renders
   const notifiedCallIdsRef = useRef<Set<string>>(new Set());
-  const initialMountTimeRef = useRef<number>(Date.now());
 
   useEffect(() => {
+    // 1. Local adapter subscription
     const updateState = () => {
       setTables([...dbAdapter.getTables()]);
       setOrders([...dbAdapter.getOrders()]);
@@ -88,8 +103,28 @@ export const WaiterDashboard: React.FC = () => {
       setVoiceSettings(dbAdapter.getVoiceSettings());
     };
     updateState();
-    return dbAdapter.subscribe(updateState);
-  }, []);
+    const unsubLocal = dbAdapter.subscribe(updateState);
+
+    // 2. Real-time Firestore onSnapshot subscription across all connected devices
+    const restaurantId = currentProfile?.restaurant_id || dbAdapter.getRestaurant().id || 'rest-001-main';
+    const unsubFirestore = WaiterCallRepository.subscribeToWaiterCalls(
+      restaurantId,
+      isAdminOrSupervisor ? 'ALL' : currentWaiterId,
+      (firestoreCalls) => {
+        const mappedCalls = firestoreCalls.map(mapFirestoreCallToWaiterCall);
+        dbAdapter.syncFirestoreWaiterCalls(mappedCalls);
+        setWaiterCalls(dbAdapter.getWaiterCalls());
+      },
+      (err) => {
+        console.warn('[WaiterDashboard] Firestore realtime sync notice:', err);
+      }
+    );
+
+    return () => {
+      unsubLocal();
+      unsubFirestore();
+    };
+  }, [currentProfile?.restaurant_id, isAdminOrSupervisor, currentWaiterId]);
 
   // Periodic automatic escalation check
   useEffect(() => {
@@ -99,47 +134,49 @@ export const WaiterDashboard: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // Realtime audio chime and voice announcement listener
+  // Realtime audio chime and voice announcement listener (never drops pending calls on mount)
   useEffect(() => {
     const myNewCalls = waiterCalls.filter((c) => {
-      const isMyCall = c.assigned_waiter_id === currentWaiterId || !c.assigned_waiter_id;
+      const isMyCall = isAdminOrSupervisor || c.assigned_waiter_id === currentWaiterId || !c.assigned_waiter_id;
       const isNew = ['REQUESTED', 'SENT', 'PENDING'].includes(c.status);
       const isNotNotified = !notifiedCallIdsRef.current.has(c.id);
-      const callTime = new Date(c.created_at).getTime();
-      const isRecent = callTime >= initialMountTimeRef.current - 15000;
-      return isMyCall && isNew && isNotNotified && isRecent;
+      return isMyCall && isNew && isNotNotified;
     });
 
     if (myNewCalls.length > 0) {
+      // Mark all new calls as announced
       myNewCalls.forEach((call) => {
         notifiedCallIdsRef.current.add(call.id);
-        // Play notification bell
-        audioService.playWaiterCallBell();
-        // Play voice announcement
-        voiceAnnouncementService.announceEvent(
-          {
-            id: `ev-${call.id}`,
-            restaurant_id: call.restaurant_id,
-            event_type: 'CALL_WAITER',
-            reference_id: call.id,
-            event_payload: {
-              table_number: call.table_number,
-              table_id: call.table_id,
-              waiter_id: call.assigned_waiter_id,
-              call_id: call.id,
-              notes: call.notes,
-            },
-            created_at: call.created_at,
-          },
-          dbAdapter.getVoiceSettings()
-        );
       });
+
+      // Play bell alert sound
+      audioService.playWaiterCallBell();
+
+      // Announce the newest call clearly via speech synthesis
+      const callToAnnounce = myNewCalls[0];
+      voiceAnnouncementService.announceEvent(
+        {
+          id: `ev-${callToAnnounce.id}`,
+          restaurant_id: callToAnnounce.restaurant_id,
+          event_type: 'CALL_WAITER',
+          reference_id: callToAnnounce.id,
+          event_payload: {
+            table_number: callToAnnounce.table_number,
+            table_id: callToAnnounce.table_id,
+            waiter_id: callToAnnounce.assigned_waiter_id,
+            call_id: callToAnnounce.id,
+            notes: callToAnnounce.notes,
+          },
+          created_at: callToAnnounce.created_at,
+        },
+        dbAdapter.getVoiceSettings()
+      );
     }
-  }, [waiterCalls]);
+  }, [waiterCalls, currentWaiterId, isAdminOrSupervisor]);
 
   const displayedCalls = waiterCalls.filter((c) => {
     if (c.status === 'COMPLETED' || c.status === 'CANCELLED') return false;
-    if (callFilter === 'MY_CALLS') {
+    if (callFilter === 'MY_CALLS' && !isAdminOrSupervisor) {
       return c.assigned_waiter_id === currentWaiterId || !c.assigned_waiter_id;
     }
     return true;
@@ -264,17 +301,29 @@ export const WaiterDashboard: React.FC = () => {
   return (
     <StaffLayout
       title="Waiter Station & Captain Desk"
-      subtitle="Floor Service, Table Assistance & Food Orders"
+      subtitle={
+        isAdminOrSupervisor
+          ? `Supervisor Oversight (${currentProfile?.full_name || 'Admin'}) • All Floor Tables & Service Calls`
+          : "Floor Service, Table Assistance & Food Orders"
+      }
       activeRole="waiter"
       actions={
-        <button
-          onClick={() => setIsAlertSettingsOpen(true)}
-          className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs flex items-center gap-1.5 transition-colors border border-slate-700"
-          title="Notification & Sound Alert Settings"
-        >
-          <Sliders className="w-3.5 h-3.5 text-brand-orange" />
-          <span className="hidden sm:inline font-semibold text-[11px]">Alert Settings</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {isAdminOrSupervisor && (
+            <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[11px] font-bold">
+              <Shield className="w-3.5 h-3.5 text-amber-400" />
+              <span>Supervisor Mode ({currentProfile?.id || 'adm-1'})</span>
+            </span>
+          )}
+          <button
+            onClick={() => setIsAlertSettingsOpen(true)}
+            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs flex items-center gap-1.5 transition-colors border border-slate-700"
+            title="Notification & Sound Alert Settings"
+          >
+            <Sliders className="w-3.5 h-3.5 text-brand-orange" />
+            <span className="hidden sm:inline font-semibold text-[11px]">Alert Settings</span>
+          </button>
+        </div>
       }
     >
       <div className="space-y-6">
@@ -342,6 +391,14 @@ export const WaiterDashboard: React.FC = () => {
         </div>
 
         {/* 1. URGENT SERVICE CALLS FROM CUSTOMERS */}
+        {activeTab === 'SERVICE_CALLS' && displayedCalls.length === 0 && (
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-12 text-center text-slate-500">
+            <Bell className="w-10 h-10 mx-auto mb-3 opacity-30 text-amber-400" />
+            <h4 className="text-slate-300 font-bold text-sm">No Pending Service Calls</h4>
+            <p className="text-xs text-slate-500 mt-1">All table assistance requests have been attended to or completed.</p>
+          </div>
+        )}
+
         {(activeTab === 'ALL' || activeTab === 'SERVICE_CALLS') && displayedCalls.length > 0 && (
           <div className="bg-amber-950/40 border-2 border-amber-500/60 rounded-3xl p-5 shadow-elevated animate-pulse-subtle">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-amber-500/30">
@@ -615,15 +672,34 @@ export const WaiterDashboard: React.FC = () => {
             {displayedTables.length === 0 ? (
               <div className="text-center py-8 text-slate-500 text-xs">
                 <UtensilsCrossed className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                <p>No tables currently assigned to your waiter ID ({currentWaiterId}).</p>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="mt-3 text-xs"
-                  onClick={() => setTableFilter('ALL')}
-                >
-                  View All Floor Tables to Claim
-                </Button>
+                {isAdminOrSupervisor ? (
+                  <>
+                    <p className="font-bold text-amber-400">
+                      Supervisor Oversight Mode ({currentProfile?.id || 'adm-1'})
+                    </p>
+                    <p className="text-slate-400 mt-1">Floor tables are assigned to individual waitstaff. Switch to All Tables to oversee floor operations.</p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="mt-3 text-xs border-amber-500/40 text-amber-300 hover:bg-amber-500/10"
+                      onClick={() => setTableFilter('ALL')}
+                    >
+                      View All Floor Tables ({tables.length})
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <p>No tables currently assigned to your waiter ID ({currentWaiterId}).</p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="mt-3 text-xs"
+                      onClick={() => setTableFilter('ALL')}
+                    >
+                      View All Floor Tables to Claim
+                    </Button>
+                  </>
+                )}
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3.5">

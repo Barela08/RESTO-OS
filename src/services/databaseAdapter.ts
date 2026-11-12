@@ -60,6 +60,8 @@ import { voiceAnnouncementService } from './voiceAnnouncementService';
 import { getTodayDateString } from '../utils/date';
 import { supabase, isLiveSupabaseConfigured } from './supabase';
 import { EdgeFunctionsClient } from './edgeFunctionsClient';
+import { isFirebaseConfigured } from '../lib/firebase';
+import { WaiterCallRepository } from './firebase/waiterCallRepository';
 
 type Listener = () => void;
 
@@ -1148,7 +1150,7 @@ class DatabaseAdapter {
       assigned_waiter_name: assignedWaiterName,
       request_type: params.requestType,
       request_message: params.notes,
-      status: 'REQUESTED',
+      status: 'PENDING',
       priority: params.priority || 'NORMAL',
       notes: params.notes,
       created_at: nowIso,
@@ -1195,12 +1197,37 @@ class DatabaseAdapter {
         customer_name: session.customer_name,
         customer_phone: session.customer_phone,
         notes: params.notes,
-        status: 'REQUESTED',
+        status: 'PENDING',
       });
     }
 
     this.notify();
 
+    // 1. Firebase Firestore Write Synchronization
+    if (isFirebaseConfigured()) {
+      WaiterCallRepository.requestWaiter({
+        restaurantId: this.restaurant.id,
+        tableId: session.table_id,
+        tableNumber,
+        tableSessionId: session.id,
+        customerId: session.customer_id,
+        customerName: session.customer_name,
+        customerPhone: session.customer_phone,
+        requestType: params.requestType,
+        requestMessage: params.notes,
+        priority: params.priority || 'NORMAL',
+        assignedWaiterId,
+        assignedWaiterName,
+      }).then((fc) => {
+        if (fc && fc.callId) {
+          call.id = fc.callId;
+        }
+      }).catch((err) => {
+        console.warn('[RESTO Firebase] Waiter call sync notice:', err);
+      });
+    }
+
+    // 2. Supabase PostgreSQL Write Synchronization
     if (isLiveSupabaseConfigured() && typeof window !== 'undefined') {
       supabase.from('waiter_calls').insert({
           restaurant_id: this.restaurant.id,
@@ -1210,10 +1237,159 @@ class DatabaseAdapter {
           customer_phone: session.customer_phone || null,
           assigned_waiter_id: assignedWaiterId && assignedWaiterId.length === 36 ? assignedWaiterId : null,
           request_type: params.requestType,
-          status: 'REQUESTED',
+          status: 'PENDING',
           priority: params.priority || 'NORMAL',
           notes: params.notes || null,
         }).then(() => {}, (err: any) => console.error('[RESTO Supabase] Waiter call sync warning:', err));
+    }
+
+    return call;
+  }
+
+  /**
+   * Asynchronously submits a waiter call, guaranteeing write to Firestore before resolving
+   */
+  public async requestServiceAsync(params: {
+    tableSessionId: string;
+    requestType: 'CALL_WAITER' | 'WATER' | 'REQUEST_BILL' | 'CLEANING' | 'ASSISTANCE';
+    priority?: 'NORMAL' | 'URGENT';
+    notes?: string;
+  }): Promise<WaiterCall> {
+    const session = this.sessions.find(s => s.id === params.tableSessionId);
+    if (!session) {
+      throw new Error('Valid table session required to call waiter');
+    }
+
+    const table = this.tables.find(t => t.id === session.table_id);
+    if (!table) {
+      throw new Error('Valid table required to call waiter');
+    }
+    const tableNumber = table.table_number || 'T-00';
+
+    // Prevent duplicate active calls for the same session while one is ongoing
+    const activeCall = this.waiterCalls.find(
+      c => c.table_session_id === session.id &&
+           c.request_type === params.requestType &&
+           ['REQUESTED', 'SENT', 'ACCEPTED', 'ON_THE_WAY', 'ARRIVED', 'PENDING', 'ACKNOWLEDGED', 'IN_PROGRESS'].includes(c.status)
+    );
+    if (activeCall) {
+      return activeCall;
+    }
+
+    // Resolve assigned waiter: Table waiter -> Restaurant backup waiter -> default waiter
+    const assignedWaiterId = table.current_waiter_id || this.settings.backup_waiter_id || 'st-wtr-1';
+    const assignedWaiterStaff = this.staff.find(s => s.id === assignedWaiterId);
+    const assignedWaiterName = assignedWaiterStaff ? assignedWaiterStaff.name : 'Floor Captain';
+
+    let callId = `call-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const nowIso = new Date().toISOString();
+
+    // Guarantee write to Firestore
+    if (isFirebaseConfigured()) {
+      try {
+        const fc = await WaiterCallRepository.requestWaiter({
+          restaurantId: this.restaurant.id,
+          tableId: session.table_id,
+          tableNumber,
+          tableSessionId: session.id,
+          customerId: session.customer_id,
+          customerName: session.customer_name,
+          customerPhone: session.customer_phone,
+          requestType: params.requestType,
+          requestMessage: params.notes,
+          priority: params.priority || 'NORMAL',
+          assignedWaiterId,
+          assignedWaiterName,
+        });
+        if (fc && fc.callId) {
+          callId = fc.callId;
+        }
+      } catch (err) {
+        console.warn('[RESTO Firebase] WaiterCallRepository.requestWaiter warning:', err);
+      }
+    }
+
+    const call: WaiterCall = {
+      id: callId,
+      restaurant_id: this.restaurant.id,
+      table_id: session.table_id,
+      table_number: tableNumber,
+      table_session_id: session.id,
+      customer_id: session.customer_id,
+      customer_name: session.customer_name,
+      customer_phone: session.customer_phone,
+      assigned_waiter_id: assignedWaiterId,
+      assigned_waiter_name: assignedWaiterName,
+      request_type: params.requestType,
+      request_message: params.notes,
+      status: 'PENDING',
+      priority: params.priority || 'NORMAL',
+      notes: params.notes,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+
+    this.waiterCalls = this.waiterCalls.filter(c => c.id !== call.id);
+    this.waiterCalls.unshift(call);
+
+    if (params.requestType === 'REQUEST_BILL') {
+      table.status = 'PAYMENT_PENDING';
+      this.addNotification({
+        recipient_role: 'counter',
+        title: `Bill Requested: Table ${tableNumber}`,
+        message: `Customer at Table ${tableNumber} has requested the bill.`,
+        event_type: 'BILL_REQUESTED',
+        reference_id: call.id,
+        sound_type: 'BELL',
+      });
+      this.emitNotificationEvent('REQUEST_BILL', call.id, {
+        call_id: call.id,
+        table_id: session.table_id,
+        table_number: tableNumber,
+        waiter_id: assignedWaiterId,
+        waiter_name: assignedWaiterName,
+      });
+    }
+
+    this.addNotification({
+      recipient_role: 'waiter',
+      title: `NEW WAITER CALL: Table ${tableNumber}`,
+      message: `A customer at Table Number ${tableNumber} is requesting assistance.`,
+      event_type: 'CALL_WAITER',
+      reference_id: call.id,
+      sound_type: 'BELL',
+    });
+
+    if (params.requestType === 'CALL_WAITER' || params.requestType === 'ASSISTANCE') {
+      this.emitNotificationEvent('CALL_WAITER', call.id, {
+        call_id: call.id,
+        table_id: session.table_id,
+        table_number: tableNumber,
+        waiter_id: assignedWaiterId,
+        waiter_name: assignedWaiterName,
+        customer_name: session.customer_name,
+        customer_phone: session.customer_phone,
+        notes: params.notes,
+        status: 'PENDING',
+      });
+    }
+
+    this.notify();
+
+    // Supabase PostgreSQL Write Synchronization
+    if (isLiveSupabaseConfigured() && call.id.length === 36) {
+      supabase.from('waiter_calls').insert({
+        restaurant_id: this.restaurant.id,
+        table_id: session.table_id,
+        table_session_id: session.id,
+        customer_name: session.customer_name || null,
+        customer_phone: session.customer_phone || null,
+        assigned_waiter_id: assignedWaiterId && assignedWaiterId.length === 36 ? assignedWaiterId : null,
+        request_type: params.requestType,
+        status: 'PENDING',
+        priority: params.priority || 'NORMAL',
+        notes: params.notes || null,
+      }).then(() => {}, (err: any) => console.error('[RESTO Supabase] Waiter call sync warning:', err));
     }
 
     return call;
@@ -1230,7 +1406,13 @@ class DatabaseAdapter {
     if (staffId) {
       call.assigned_waiter_id = staffId;
       const s = this.staff.find(st => st.id === staffId);
-      if (s) call.assigned_waiter_name = s.name;
+      if (s) {
+        call.assigned_waiter_name = s.name;
+      } else if (staffId.includes('adm')) {
+        call.assigned_waiter_name = 'Floor Supervisor';
+      } else {
+        call.assigned_waiter_name = 'Assigned Waiter';
+      }
     }
     const createdMs = new Date(call.created_at).getTime();
     const acceptedMs = new Date(nowIso).getTime();
@@ -1238,6 +1420,16 @@ class DatabaseAdapter {
     call.updated_at = nowIso;
 
     this.notify();
+
+    if (isFirebaseConfigured()) {
+      WaiterCallRepository.updateCallStatus(
+        call.restaurant_id,
+        call.id,
+        'ACCEPTED',
+        staffId,
+        call.assigned_waiter_name
+      ).catch((err) => console.warn('[RESTO Firebase] Accept call warning:', err));
+    }
 
     if (isLiveSupabaseConfigured() && typeof window !== 'undefined' && call.id.length === 36) {
       supabase.from('waiter_calls').update({
@@ -1262,11 +1454,27 @@ class DatabaseAdapter {
     if (staffId && !call.assigned_waiter_id) {
       call.assigned_waiter_id = staffId;
       const s = this.staff.find(st => st.id === staffId);
-      if (s) call.assigned_waiter_name = s.name;
+      if (s) {
+        call.assigned_waiter_name = s.name;
+      } else if (staffId.includes('adm')) {
+        call.assigned_waiter_name = 'Floor Supervisor';
+      } else {
+        call.assigned_waiter_name = 'Assigned Waiter';
+      }
     }
     call.updated_at = nowIso;
 
     this.notify();
+
+    if (isFirebaseConfigured()) {
+      WaiterCallRepository.updateCallStatus(
+        call.restaurant_id,
+        call.id,
+        'ON_THE_WAY',
+        staffId,
+        call.assigned_waiter_name
+      ).catch((err) => console.warn('[RESTO Firebase] On the way call warning:', err));
+    }
 
     if (isLiveSupabaseConfigured() && typeof window !== 'undefined' && call.id.length === 36) {
       supabase.from('waiter_calls').update({
@@ -1290,11 +1498,27 @@ class DatabaseAdapter {
     if (staffId && !call.assigned_waiter_id) {
       call.assigned_waiter_id = staffId;
       const s = this.staff.find(st => st.id === staffId);
-      if (s) call.assigned_waiter_name = s.name;
+      if (s) {
+        call.assigned_waiter_name = s.name;
+      } else if (staffId.includes('adm')) {
+        call.assigned_waiter_name = 'Floor Supervisor';
+      } else {
+        call.assigned_waiter_name = 'Assigned Waiter';
+      }
     }
     call.updated_at = nowIso;
 
     this.notify();
+
+    if (isFirebaseConfigured()) {
+      WaiterCallRepository.updateCallStatus(
+        call.restaurant_id,
+        call.id,
+        'ARRIVED',
+        staffId,
+        call.assigned_waiter_name
+      ).catch((err) => console.warn('[RESTO Firebase] Arrived call warning:', err));
+    }
 
     if (isLiveSupabaseConfigured() && typeof window !== 'undefined' && call.id.length === 36) {
       supabase.from('waiter_calls').update({
@@ -1318,11 +1542,27 @@ class DatabaseAdapter {
     if (staffId && !call.assigned_waiter_id) {
       call.assigned_waiter_id = staffId;
       const s = this.staff.find(st => st.id === staffId);
-      if (s) call.assigned_waiter_name = s.name;
+      if (s) {
+        call.assigned_waiter_name = s.name;
+      } else if (staffId.includes('adm')) {
+        call.assigned_waiter_name = 'Floor Supervisor';
+      } else {
+        call.assigned_waiter_name = 'Assigned Waiter';
+      }
     }
     call.updated_at = nowIso;
 
     this.notify();
+
+    if (isFirebaseConfigured()) {
+      WaiterCallRepository.updateCallStatus(
+        call.restaurant_id,
+        call.id,
+        'COMPLETED',
+        staffId,
+        call.assigned_waiter_name
+      ).catch((err) => console.warn('[RESTO Firebase] Complete call warning:', err));
+    }
 
     if (isLiveSupabaseConfigured() && typeof window !== 'undefined' && call.id.length === 36) {
       supabase.from('waiter_calls').update({
@@ -1343,6 +1583,14 @@ class DatabaseAdapter {
     call.updated_at = new Date().toISOString();
     this.notify();
 
+    if (isFirebaseConfigured()) {
+      WaiterCallRepository.updateCallStatus(
+        call.restaurant_id,
+        call.id,
+        'CANCELLED'
+      ).catch((err) => console.warn('[RESTO Firebase] Cancel call warning:', err));
+    }
+
     if (isLiveSupabaseConfigured() && typeof window !== 'undefined' && call.id.length === 36) {
       supabase.from('waiter_calls').update({
           status: 'CANCELLED',
@@ -1351,6 +1599,20 @@ class DatabaseAdapter {
     }
 
     return call;
+  }
+
+  public syncFirestoreWaiterCalls(calls: WaiterCall[]) {
+    if (!calls || calls.length === 0) return;
+    const existingMap = new Map(this.waiterCalls.map(c => [c.id, c]));
+    for (const fc of calls) {
+      existingMap.set(fc.id, fc);
+    }
+    this.waiterCalls = Array.from(existingMap.values()).sort((a, b) => {
+      const tA = new Date(a.created_at).getTime() || 0;
+      const tB = new Date(b.created_at).getTime() || 0;
+      return tB - tA;
+    });
+    this.notify();
   }
 
   public reassignWaiterCall(callId: string, newWaiterId: string, adminId?: string): WaiterCall {
@@ -2720,6 +2982,36 @@ class DatabaseAdapter {
     };
     this.serviceRequests.unshift(req);
     this.requestService({
+      tableSessionId: params.tableSessionId,
+      requestType: params.requestType as any,
+      notes: params.notes,
+    });
+    this.notify();
+    return req;
+  }
+
+  public async createServiceRequestAsync(params: {
+    tableSessionId: string;
+    requestType: 'CALL_WAITER' | 'REQUEST_BILL' | 'WATER' | 'CUTLERY' | 'CLEANING' | 'ASSISTANCE';
+    notes?: string;
+  }): Promise<ServiceRequest> {
+    const session = this.sessions.find(s => s.id === params.tableSessionId);
+    if (!session) throw new Error('Valid table session required');
+    const table = this.tables.find(t => t.id === session.table_id);
+    const req: ServiceRequest = {
+      id: `sr-${Date.now()}`,
+      restaurant_id: this.restaurant.id,
+      table_id: session.table_id,
+      table_number: table?.table_number || 'T-00',
+      table_session_id: session.id,
+      request_type: params.requestType,
+      status: 'PENDING',
+      notes: params.notes,
+      assigned_staff_id: table?.current_waiter_id,
+      created_at: new Date().toISOString(),
+    };
+    this.serviceRequests.unshift(req);
+    await this.requestServiceAsync({
       tableSessionId: params.tableSessionId,
       requestType: params.requestType as any,
       notes: params.notes,
