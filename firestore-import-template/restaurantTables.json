@@ -1,0 +1,62 @@
+[
+  {
+    "_id": "tbl-01",
+    "restaurantId": "rest-001-main",
+    "tableNumber": "T-01",
+    "seatingCapacity": 2,
+    "floorArea": "Window Bay",
+    "status": "AVAILABLE",
+    "currentWaiterId": "st-wtr-01",
+    "isActive": true
+  },
+  {
+    "_id": "tbl-02",
+    "restaurantId": "rest-001-main",
+    "tableNumber": "T-02",
+    "seatingCapacity": 2,
+    "floorArea": "Window Bay",
+    "status": "AVAILABLE",
+    "currentWaiterId": "st-wtr-01",
+    "isActive": true
+  },
+  {
+    "_id": "tbl-03",
+    "restaurantId": "rest-001-main",
+    "tableNumber": "T-03",
+    "seatingCapacity": 4,
+    "floorArea": "Main Dining",
+    "status": "AVAILABLE",
+    "currentWaiterId": "st-wtr-01",
+    "isActive": true
+  },
+  {
+    "_id": "tbl-04",
+    "restaurantId": "rest-001-main",
+    "tableNumber": "T-04",
+    "seatingCapacity": 4,
+    "floorArea": "Main Dining",
+    "status": "AVAILABLE",
+    "currentWaiterId": "st-wtr-01",
+    "isActive": true
+  },
+  {
+    "_id": "tbl-05",
+    "restaurantId": "rest-001-main",
+    "tableNumber": "T-05",
+    "seatingCapacity": 6,
+    "floorArea": "Family Lounge",
+    "status": "AVAILABLE",
+    "currentWaiterId": "st-wtr-01",
+    "isActive": true
+  },
+  {
+    "_id": "tbl-10",
+    "restaurantId": "rest-001-main",
+    "tableNumber": "T-10",
+    "seatingCapacity": 4,
+    "floorArea": "Main Dining",
+    "status": "AVAILABLE",
+    "currentWaiterId": "st-wtr-01",
+    "isActive": true
+  }
+]

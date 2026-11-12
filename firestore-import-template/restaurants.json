@@ -1,0 +1,31 @@
+[
+  {
+    "_id": "rest-001-main",
+    "name": "The Grand Bistro & Craft Kitchen",
+    "tagline": "Artisanal Flavors, Smart Dining Experience",
+    "logoUrl": "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=300&q=80",
+    "address": "108 Platinum Tower, Ring Road, Indiranagar",
+    "city": "Bengaluru",
+    "state": "Karnataka",
+    "postalCode": "560038",
+    "country": "India",
+    "phone": "+91 98765 43210",
+    "email": "contact@thegrandbistro.in",
+    "gstin": "29ABCDE1234F1Z5",
+    "fssaiLicense": "11223344556677",
+    "currency": "INR",
+    "currencySymbol": "₹",
+    "timezone": "Asia/Kolkata",
+    "settings": {
+      "cgstRate": 0.025,
+      "sgstRate": 0.025,
+      "autoAcceptOrders": false,
+      "voiceEnabled": true,
+      "voiceLanguage": "hi",
+      "soundVolume": 0.9,
+      "waiterEscalationTimeoutSeconds": 60,
+      "backupWaiterId": "st-wtr-01"
+    },
+    "isActive": true
+  }
+]

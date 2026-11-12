@@ -1,0 +1,58 @@
+[
+  {
+    "_comment": "Replace _id with the actual Firebase Auth UID generated in Firebase Console > Authentication",
+    "_id": "AUTH_UID_OWNER_PLACEHOLDER",
+    "restaurantId": "rest-001-main",
+    "email": "owner@thegrandbistro.in",
+    "username": "owner",
+    "fullName": "Vikramaditya Singhania",
+    "phone": "+91 98000 00001",
+    "role": "owner",
+    "employeeId": "EMP-OWN-001",
+    "isActive": true
+  },
+  {
+    "_id": "AUTH_UID_ADMIN_PLACEHOLDER",
+    "restaurantId": "rest-001-main",
+    "email": "admin@thegrandbistro.in",
+    "username": "admin",
+    "fullName": "Pooja Sharma",
+    "phone": "+91 98000 00002",
+    "role": "admin",
+    "employeeId": "EMP-ADM-002",
+    "isActive": true
+  },
+  {
+    "_id": "AUTH_UID_COUNTER_PLACEHOLDER",
+    "restaurantId": "rest-001-main",
+    "email": "counter@thegrandbistro.in",
+    "username": "counter",
+    "fullName": "Amit Verma",
+    "phone": "+91 98000 00003",
+    "role": "counter",
+    "employeeId": "EMP-CTR-003",
+    "isActive": true
+  },
+  {
+    "_id": "AUTH_UID_WAITER_PLACEHOLDER",
+    "restaurantId": "rest-001-main",
+    "email": "waiter@thegrandbistro.in",
+    "username": "waiter",
+    "fullName": "Rahul Deshmukh",
+    "phone": "+91 98000 00004",
+    "role": "waiter",
+    "employeeId": "EMP-WTR-004",
+    "isActive": true
+  },
+  {
+    "_id": "AUTH_UID_KITCHEN_PLACEHOLDER",
+    "restaurantId": "rest-001-main",
+    "email": "kitchen@thegrandbistro.in",
+    "username": "kitchen",
+    "fullName": "Chef Sanjeev Kumar",
+    "phone": "+91 98000 00005",
+    "role": "kitchen",
+    "employeeId": "EMP-KIT-005",
+    "isActive": true
+  }
+]

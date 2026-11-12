@@ -1,0 +1,46 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "presence": {
+      "$restaurantId": {
+        ".read": "auth != null",
+        "$userId": {
+          ".write": "auth != null && (auth.uid === $userId || root.child('presence').child($restaurantId).child(auth.uid).child('role').val() === 'owner' || root.child('presence').child($restaurantId).child(auth.uid).child('role').val() === 'admin')",
+          ".validate": "newData.hasChildren(['status', 'lastSeen']) && (newData.child('status').val() === 'online' || newData.child('status').val() === 'offline')"
+        }
+      }
+    },
+
+    "connections": {
+      "$restaurantId": {
+        ".read": "auth != null",
+        "$userId": {
+          ".write": "auth != null && auth.uid === $userId"
+        }
+      }
+    },
+
+    "liveEvents": {
+      "$restaurantId": {
+        ".read": "true",
+        ".indexOn": ["timestamp"],
+        "$eventId": {
+          ".write": "true",
+          ".validate": "newData.hasChildren(['eventId', 'eventType', 'timestamp'])"
+        }
+      }
+    },
+
+    "deviceStatus": {
+      "$restaurantId": {
+        ".read": "auth != null",
+        "$deviceId": {
+          ".write": "true",
+          ".validate": "newData.hasChildren(['deviceId', 'lastPing'])"
+        }
+      }
+    }
+  }
+}

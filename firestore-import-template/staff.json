@@ -1,0 +1,58 @@
+[
+  {
+    "_id": "st-own-01",
+    "restaurantId": "rest-001-main",
+    "userId": "AUTH_UID_OWNER_PLACEHOLDER",
+    "name": "Vikramaditya Singhania",
+    "role": "owner",
+    "employeeCode": "EMP-OWN-001",
+    "designation": "Restaurant Proprietor",
+    "shiftPreference": "morning",
+    "isOnDuty": true
+  },
+  {
+    "_id": "st-adm-01",
+    "restaurantId": "rest-001-main",
+    "userId": "AUTH_UID_ADMIN_PLACEHOLDER",
+    "name": "Pooja Sharma",
+    "role": "admin",
+    "employeeCode": "EMP-ADM-002",
+    "designation": "General Manager",
+    "shiftPreference": "morning",
+    "isOnDuty": true
+  },
+  {
+    "_id": "st-ctr-01",
+    "restaurantId": "rest-001-main",
+    "userId": "AUTH_UID_COUNTER_PLACEHOLDER",
+    "name": "Amit Verma",
+    "role": "counter",
+    "employeeCode": "EMP-CTR-003",
+    "designation": "Cashier & Counter Manager",
+    "shiftPreference": "morning",
+    "isOnDuty": true
+  },
+  {
+    "_id": "st-wtr-01",
+    "restaurantId": "rest-001-main",
+    "userId": "AUTH_UID_WAITER_PLACEHOLDER",
+    "name": "Rahul Deshmukh",
+    "role": "waiter",
+    "employeeCode": "EMP-WTR-004",
+    "designation": "Senior Floor Captain",
+    "shiftPreference": "evening",
+    "isOnDuty": true
+  },
+  {
+    "_id": "st-kit-01",
+    "restaurantId": "rest-001-main",
+    "userId": "AUTH_UID_KITCHEN_PLACEHOLDER",
+    "name": "Chef Sanjeev Kumar",
+    "role": "kitchen",
+    "employeeCode": "EMP-KIT-005",
+    "designation": "Executive Head Chef",
+    "assignedStations": ["sta-curry", "sta-tandoor", "sta-beverage", "sta-dessert"],
+    "shiftPreference": "evening",
+    "isOnDuty": true
+  }
+]
