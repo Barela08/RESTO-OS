@@ -1,0 +1,34 @@
+[
+  {
+    "_id": "sta-curry",
+    "restaurantId": "rest-001-main",
+    "name": "Gravy & Curry Station",
+    "code": "CURRY",
+    "displayOrder": 1,
+    "isActive": true
+  },
+  {
+    "_id": "sta-tandoor",
+    "restaurantId": "rest-001-main",
+    "name": "Sigri Charcoal & Tandoor",
+    "code": "TANDOOR",
+    "displayOrder": 2,
+    "isActive": true
+  },
+  {
+    "_id": "sta-beverage",
+    "restaurantId": "rest-001-main",
+    "name": "Bar & Mixology Dispense",
+    "code": "BAR",
+    "displayOrder": 3,
+    "isActive": true
+  },
+  {
+    "_id": "sta-dessert",
+    "restaurantId": "rest-001-main",
+    "name": "Bakery & Desserts Station",
+    "code": "DESSERT",
+    "displayOrder": 4,
+    "isActive": true
+  }
+]
