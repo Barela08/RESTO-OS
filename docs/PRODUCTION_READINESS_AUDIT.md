@@ -1,0 +1,56 @@
+# RESTO OS Production Readiness Audit
+
+**Audit date:** 2026-11-12  
+**Supabase project:** `mklcrcyubohgfosgxmrm`  
+**Repository branch:** `security-hardening`
+
+## Executive status
+
+The repository and Supabase project are not yet production-ready as a connected restaurant operations system. The current frontend still contains demo/in-memory data flows and local persistence. The Supabase database is populated and has RLS enabled on its public tables, but the current security posture is not safe for public production traffic.
+
+No production DDL, data mutation, migration application, deployment, or merge was performed as part of this audit.
+
+## Verified findings
+
+### Frontend / repository
+
+- `src/services/supabase.ts` falls back to a fake demo project URL and fake key when environment variables are missing.
+- `.env.example` enables `VITE_ENABLE_MOCK_FALLBACK=true`.
+- `src/services/databaseAdapter.ts` seeds demo restaurant, staff, menu and operational records in process memory.
+- `src/store/authStore.ts` authenticates against the local adapter and restores staff identity from browser storage.
+- `src/app/guards/CustomerSessionGuard.tsx` contains a table selector intended for demo/testing.
+- `src/store/sessionStore.ts` restores table sessions from the local adapter rather than revalidating against the server.
+- The current QR helper describes daily tokens, while the requested product behavior requires permanent table QR codes and silent resume of an active session.
+
+### Supabase
+
+- Public schema tables have RLS enabled, but 23 tables were reported by the Security Advisor as having no RLS policies.
+- Security Advisor reported 8 functions with mutable search paths.
+- Security Advisor reported 10 SECURITY DEFINER functions executable by `anon` and `authenticated`.
+- Several existing policies are overly broad and allow public read/write access to operational records. These must be redesigned against actual ownership, role and restaurant boundaries.
+- Existing production data and function definitions must be preserved and reviewed before changing policies or function grants.
+
+## Required implementation sequence
+
+1. Verify a recoverable Supabase backup in the Dashboard. Do not apply production DDL before this is confirmed.
+2. Replace demo Supabase configuration with explicit environment validation and remove mock fallback from production configuration.
+3. Implement Supabase Auth-backed staff identity and server-authoritative role checks. Do not trust localStorage or user-editable JWT metadata for authorization.
+4. Replace local adapter persistence for orders, order items, table sessions, waiter calls, kitchen tickets, payments and invoices with database-backed operations.
+5. Implement secure permanent QR verification and active-session resume.
+6. Implement transactional server-side order pricing, payment settlement, invoice creation and loyalty issuance with idempotency.
+7. Add narrowly scoped RLS policies for every exposed table and restrict SECURITY DEFINER function execution. Set safe search paths and validate caller identity inside privileged functions.
+8. Add Realtime subscriptions for kitchen, waiter, counter and owner views.
+9. Run typecheck, lint, automated tests, advisor checks and end-to-end smoke tests.
+10. Deploy only after successful verification and approval.
+
+## Production safety rules
+
+- Never put a Supabase service-role/secret key in browser code or any `VITE_*` variable.
+- Do not expose demo credentials or seeded demo staff accounts in production.
+- Do not drop or truncate populated tables as a shortcut.
+- Do not run old migration files blindly. Supabase migration history was previously found empty; reconcile actual live schema before adopting migrations.
+- Do not describe the app as production-ready until real database flows and cross-role tests pass.
+
+## Backup gate
+
+**Status at audit time: NOT CHECKED by project owner.** Production schema changes remain blocked until the owner verifies the latest successful backup/recovery point in Supabase Dashboard → Database → Backups.
