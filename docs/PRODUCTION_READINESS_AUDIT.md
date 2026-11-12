@@ -68,3 +68,12 @@ No production DDL, data mutation, migration application, deployment, or merge wa
 ## Backup gate
 
 **Status at audit time: NOT CHECKED by project owner.** Production schema changes remain blocked until the owner verifies the latest successful backup/recovery point in Supabase Dashboard → Database → Backups.
+
+
+## Follow-up verification (2026-11-12)
+
+- The Supabase Realtime publication already contains the core operational tables: `orders`, `order_items`, `kitchen_tickets`, `waiter_calls`, `payments`, `invoices`, `restaurant_tables`, and `table_sessions`, among other tables. This verifies publication membership only; frontend subscriptions and event delivery still require implementation and tests.
+- A security-baseline migration proposal was added at `supabase/migrations/20261112090000_security_baseline.sql`. It creates explicit deny-by-default policies for the 23 tables flagged as having no policies, pins search paths on the eight flagged functions, and revokes execution of privileged RPCs that currently trust caller-supplied staff IDs. It is intentionally not applied to production because the backup status remains unverified and the restrictive cutover requires staging validation.
+- Added `.github/workflows/ci.yml` to run npm install, production build/typecheck, lint, and unit tests on pushes and pull requests. Results are pending GitHub Actions execution.
+- No Edge Functions are currently deployed. No Edge Function has been deployed by this change set.
+- Staff Auth, permanent QR client integration, transactional order/payment replacement, Realtime frontend subscriptions, and end-to-end tests remain implementation work. The project is not production-ready.
