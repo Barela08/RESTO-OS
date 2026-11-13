@@ -306,6 +306,9 @@ class DatabaseAdapter {
       REPEAT_SCAN_APPROVAL: true,
       URGENT_ASSISTANCE: true,
       ORDER_CANCELLED: true,
+      FOOD_SERVED: true,
+      TABLE_CLEANING: true,
+      TABLE_AVAILABLE: true,
     },
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -710,7 +713,7 @@ class DatabaseAdapter {
 
   public verifyQRToken(tokenHash: string): {
     valid: boolean;
-    errorCode?: 'INVALID_TOKEN' | 'EXPIRED_TOKEN' | 'REVOKED_TOKEN';
+    errorCode?: 'INVALID_TOKEN' | 'EXPIRED_TOKEN' | 'REVOKED_TOKEN' | 'TABLE_CLEANING' | 'TABLE_UNAVAILABLE';
     message: string;
     table?: RestaurantTable;
     session?: TableSession;
@@ -735,6 +738,25 @@ class DatabaseAdapter {
     const table = this.tables.find(t => t.id === token.table_id);
     if (!table) {
       return { valid: false, errorCode: 'INVALID_TOKEN', message: 'Assigned table could not be found.' };
+    }
+
+    // Cleaning Phase: Table displays CLEANING and cannot accept new guests until cleaned and reset.
+    if (table.status === 'CLEANING') {
+      return {
+        valid: false,
+        errorCode: 'TABLE_CLEANING',
+        message: 'This table is currently being sanitized and reset. Please wait a moment or speak with staff.',
+        table,
+      };
+    }
+
+    if (table.status === 'OUT_OF_SERVICE' || table.status === 'DISABLED') {
+      return {
+        valid: false,
+        errorCode: 'TABLE_UNAVAILABLE',
+        message: 'This table is currently not available for dining.',
+        table,
+      };
     }
 
     // Check if an active session exists on this table
@@ -1067,7 +1089,7 @@ class DatabaseAdapter {
       this.kitchenTickets.unshift(ticket);
     });
 
-    // Notify Kitchen & Waiter
+    // Notify Kitchen, Waiter & Cash Counter (One Order -> Three Destinations)
     this.addNotification({
       recipient_role: 'kitchen',
       title: `New Order: Table ${table.table_number}`,
@@ -1086,6 +1108,24 @@ class DatabaseAdapter {
       sound_type: 'CHIME',
     });
 
+    this.addNotification({
+      recipient_role: 'counter',
+      title: `New Order: Table ${table.table_number}`,
+      message: `Table ${table.table_number} placed order ${order.order_number} (${this.restaurant.currency_symbol || '₹'}${order.total_amount.toFixed(2)}).`,
+      event_type: 'NEW_ORDER',
+      reference_id: order.id,
+      sound_type: 'CHIME',
+    });
+
+    // Ensure session tracks all orders placed at this table
+    if (session.orders) {
+      if (!session.orders.some(o => o.id === order.id)) {
+        session.orders.push(order);
+      }
+    } else {
+      session.orders = [order];
+    }
+
     if (params.idempotencyKey) {
       (order as any).idempotency_key = params.idempotencyKey;
     }
@@ -1098,7 +1138,8 @@ class DatabaseAdapter {
       waiter_name: this.staff.find(s => s.id === table.current_waiter_id)?.designation || 'Server',
     });
 
-    audioService.playNewOrderChime();
+    // Customer device placing the order remains silent.
+    // Kitchen station device receives the ticket via Firestore and plays the kitchen chime.
     this.notify();
 
     // Background Firestore Persistence
@@ -1243,7 +1284,7 @@ class DatabaseAdapter {
         reference_id: ticket.id,
         sound_type: 'BELL',
       });
-      audioService.playWaiterCallBell();
+      // Do not play waiter bell on kitchen device. Waiter mobile will receive alert and play bell.
       this.emitNotificationEvent('ORDER_READY', ticket.id, {
         table_number: ticket.table_number,
         ticket_number: ticket.ticket_number,
@@ -1338,6 +1379,13 @@ class DatabaseAdapter {
     order.status = 'SERVED';
     order.updated_at = new Date().toISOString();
 
+    // Mark all kitchen tickets for this order as SERVED
+    const orderTickets = this.kitchenTickets.filter(t => t.order_id === orderId);
+    orderTickets.forEach(t => {
+      t.status = 'SERVED';
+      t.updated_at = new Date().toISOString();
+    });
+
     if (db) {
       OrderRepository.updateOrderStatus(
         this.restaurant.id,
@@ -1365,7 +1413,19 @@ class DatabaseAdapter {
       sound_type: 'CHIME',
     });
 
+    this.emitNotificationEvent('FOOD_SERVED', order.id, {
+      table_number: order.table?.table_number,
+      order_number: order.order_number,
+    });
+
     this.notify();
+  }
+
+  public acknowledgeTicketPickup(ticketId: string, staffId: string = 'st-wtr-1'): KitchenTicket | null {
+    const ticket = this.kitchenTickets.find(t => t.id === ticketId);
+    if (!ticket) return null;
+    this.updateKitchenTicketStatus(ticketId, 'PICKED_UP');
+    return ticket;
   }
 
   // ------------------------------------------------------------------
@@ -1688,6 +1748,7 @@ class DatabaseAdapter {
     call.acknowledged_at = nowIso;
     if (staffId) {
       call.assigned_waiter_id = staffId;
+      (call as any).accepted_by = staffId;
       const s = this.staff.find(st => st.id === staffId);
       if (s) {
         call.assigned_waiter_name = s.name;
@@ -1891,6 +1952,20 @@ class DatabaseAdapter {
       existingMap.set(fc.id, fc);
     }
     this.waiterCalls = Array.from(existingMap.values()).sort((a, b) => {
+      const tA = new Date(a.created_at).getTime() || 0;
+      const tB = new Date(b.created_at).getTime() || 0;
+      return tB - tA;
+    });
+    this.notify();
+  }
+
+  public syncFirestoreKitchenTickets(tickets: KitchenTicket[]) {
+    if (!tickets || tickets.length === 0) return;
+    const existingMap = new Map(this.kitchenTickets.map(t => [t.id, t]));
+    for (const ft of tickets) {
+      existingMap.set(ft.id, ft);
+    }
+    this.kitchenTickets = Array.from(existingMap.values()).sort((a, b) => {
       const tA = new Date(a.created_at).getTime() || 0;
       const tB = new Date(b.created_at).getTime() || 0;
       return tB - tA;
@@ -2136,11 +2211,27 @@ class DatabaseAdapter {
     return payment;
   }
 
+  public initiatePaymentSession(params: {
+    tableSessionId: string;
+    method: 'CASH' | 'UPI' | 'RAZORPAY';
+    amount?: number;
+    customerName?: string;
+    customerPhone?: string;
+  }): Payment {
+    return this.initiateCustomerPayment({
+      tableSessionId: params.tableSessionId,
+      method: params.method === 'RAZORPAY' ? 'UPI' : (params.method as 'CASH' | 'UPI'),
+      customerName: params.customerName,
+      customerPhone: params.customerPhone,
+    });
+  }
+
   public confirmPayment(params: {
     paymentId: string;
     staffId: string;
     cashReceivedAmount?: number;
     transactionRef?: string;
+    retainOccupied?: boolean;
   }): { invoice: Invoice; stampAwarded: boolean } {
     const payment = this.payments.find(p => p.id === params.paymentId);
     if (!payment) throw new Error('Payment record not found');
@@ -2155,30 +2246,49 @@ class DatabaseAdapter {
       payment.cash_change_amount = params.cashReceivedAmount - payment.amount;
     }
 
-    // Complete all orders in this session
+    // Update orders in this session
     const sessionOrders = this.orders.filter(o => o.table_session_id === payment.table_session_id);
-    sessionOrders.forEach(o => {
-      o.status = 'COMPLETED';
-      o.updated_at = new Date().toISOString();
-    });
-
-    // Free the table for cleaning
     const table = this.tables.find(t => t.id === payment.table_id);
-    if (table) {
-      table.status = 'CLEANING';
-      table.updated_at = new Date().toISOString();
-      if (db) {
-        TableRepository.updateTableStatus(this.restaurant.id, table.id, 'CLEANING').catch((err) =>
-          console.warn('[TableRepository] Table status update to CLEANING warning:', err)
-        );
-      }
-    }
-
-    // Close table session
     const session = this.sessions.find(s => s.id === payment.table_session_id);
-    if (session) {
-      session.status = 'CLOSED';
-      session.closed_at = new Date().toISOString();
+
+    if (params.retainOccupied) {
+      // Retain table OCCUPIED while guests are finishing meal/dessert.
+      // Payment status is marked PAID on all orders.
+      sessionOrders.forEach(o => {
+        o.payment_status = 'PAID';
+        o.updated_at = new Date().toISOString();
+      });
+      if (table) {
+        table.status = 'OCCUPIED';
+        table.updated_at = new Date().toISOString();
+        if (db) {
+          TableRepository.updateTableStatus(this.restaurant.id, table.id, 'OCCUPIED').catch((err) =>
+            console.warn('[TableRepository] Table status update to OCCUPIED warning:', err)
+          );
+        }
+      }
+    } else {
+      // Standard settlement: transition table to CLEANING and close dining session
+      sessionOrders.forEach(o => {
+        o.status = 'COMPLETED';
+        o.payment_status = 'PAID';
+        o.updated_at = new Date().toISOString();
+      });
+
+      if (table) {
+        table.status = 'CLEANING';
+        table.updated_at = new Date().toISOString();
+        if (db) {
+          TableRepository.updateTableStatus(this.restaurant.id, table.id, 'CLEANING').catch((err) =>
+            console.warn('[TableRepository] Table status update to CLEANING warning:', err)
+          );
+        }
+      }
+
+      if (session) {
+        session.status = 'CLOSED';
+        session.closed_at = new Date().toISOString();
+      }
     }
 
     // Generate Official Tax Invoice
@@ -2285,6 +2395,63 @@ class DatabaseAdapter {
 
     this.notify();
     return { invoice, stampAwarded };
+  }
+
+  /**
+   * Completes dining service when guests finish their meal.
+   * Transitions table from OCCUPIED to CLEANING, archives the dining session,
+   * clears pending waiter calls, and completes active orders without deleting historical data.
+   */
+  public completeTableService(tableId: string, staffId: string = 'st-wtr-1'): { table: RestaurantTable; session: TableSession | null } {
+    const table = this.tables.find(t => t.id === tableId);
+    if (!table) throw new Error(`Table with ID ${tableId} not found`);
+
+    table.status = 'CLEANING';
+    table.updated_at = new Date().toISOString();
+
+    const activeSession = this.sessions.find(s => s.table_id === tableId && s.status === 'ACTIVE');
+    if (activeSession) {
+      activeSession.status = 'CLOSED';
+      activeSession.closed_at = new Date().toISOString();
+
+      const sessionOrders = this.orders.filter(o => o.table_session_id === activeSession.id);
+      sessionOrders.forEach(o => {
+        if (o.status !== 'CANCELLED' && o.status !== 'REJECTED') {
+          o.status = 'COMPLETED';
+          o.updated_at = new Date().toISOString();
+        }
+      });
+    }
+
+    // Complete all active waiter calls for this table
+    this.waiterCalls.forEach(c => {
+      if (c.table_id === tableId && ['REQUESTED', 'SENT', 'PENDING', 'ACCEPTED', 'ON_THE_WAY', 'ARRIVED'].includes(c.status)) {
+        c.status = 'COMPLETED';
+        c.completed_at = new Date().toISOString();
+      }
+    });
+
+    this.notify();
+
+    if (db) {
+      TableRepository.updateTableStatus(this.restaurant.id, table.id, 'CLEANING').catch((err) =>
+        console.warn('[TableRepository] Table status update to CLEANING warning:', err)
+      );
+    }
+
+    if (isLiveSupabaseConfigured() && typeof window !== 'undefined' && table.id.length === 36) {
+      supabase.from('restaurant_tables').update({
+        status: 'CLEANING',
+        updated_at: table.updated_at,
+      }).eq('id', table.id).then(() => {}, (err: any) => console.error('[RESTO Supabase] Table cleaning update warning:', err));
+    }
+
+    this.emitNotificationEvent('TABLE_CLEANING', table.id, {
+      table_number: table.table_number,
+      staff_id: staffId,
+    });
+
+    return { table, session: activeSession || null };
   }
 
   public getAuthorizedInvoices(auth: {
@@ -3931,7 +4098,7 @@ class DatabaseAdapter {
     }
   }
 
-  public markTableCleaned(tableId: string): RestaurantTable {
+  public markTableCleaned(tableId: string, staffId: string = 'staff'): RestaurantTable {
     const table = this.tables.find(t => t.id === tableId);
     if (!table) throw new Error(`Table with ID ${tableId} not found`);
     table.status = 'AVAILABLE';
@@ -3950,6 +4117,11 @@ class DatabaseAdapter {
         updated_at: table.updated_at,
       }).eq('id', tableId).then(() => {}, (err: any) => console.error('[RESTO Supabase] Table cleaned warning:', err));
     }
+
+    this.emitNotificationEvent('TABLE_AVAILABLE', table.id, {
+      table_number: table.table_number,
+      staff_id: staffId,
+    });
 
     return table;
   }

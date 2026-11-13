@@ -16,7 +16,7 @@ import { StaffLayout } from '../../components/layout/StaffLayout';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { TableStatusBadge, OrderStatusBadge } from '../../components/ui/Badge';
-import { formatTime, formatDate } from '../../utils/date';
+import { formatTime, formatDate, formatDateTime } from '../../utils/date';
 import { formatCurrency } from '../../utils/currency';
 import {
   Bell,
@@ -42,6 +42,7 @@ import {
   Shield,
 } from 'lucide-react';
 import { WaiterCallRepository, mapFirestoreCallToWaiterCall } from '../../services/firebase/waiterCallRepository';
+import { OrderRepository, mapFirestoreKitchenTicketToKitchenTicket } from '../../services/firebase/orderRepository';
 
 export const WaiterDashboard: React.FC = () => {
   const [tables, setTables] = useState<RestaurantTable[]>([]);
@@ -90,8 +91,14 @@ export const WaiterDashboard: React.FC = () => {
   } | null>(null);
   const [redemptionSuccessMsg, setRedemptionSuccessMsg] = useState<string | null>(null);
 
+  // Waiter incoming order acknowledgement and detail modal state (Module 4)
+  const [acknowledgedOrderIds, setAcknowledgedOrderIds] = useState<Set<string>>(new Set());
+  const [selectedOrderForModal, setSelectedOrderForModal] = useState<Order | null>(null);
+
   // Set of call IDs already announced to prevent duplicate audio/voice on re-renders
   const notifiedCallIdsRef = useRef<Set<string>>(new Set());
+  const notifiedReadyTicketIdsRef = useRef<Set<string>>(new Set());
+  const isInitialTicketMountRef = useRef<boolean>(true);
 
   useEffect(() => {
     // 1. Local adapter subscription
@@ -99,7 +106,7 @@ export const WaiterDashboard: React.FC = () => {
       setTables([...dbAdapter.getTables()]);
       setOrders([...dbAdapter.getOrders()]);
       setWaiterCalls([...dbAdapter.getWaiterCalls()]);
-      setReadyTickets(dbAdapter.getKitchenTickets().filter((t) => t.status === 'READY'));
+      setReadyTickets(dbAdapter.getKitchenTickets().filter((t) => t.status === 'READY' || (t.status as any) === 'READY_FOR_HANDOVER'));
       setVoiceSettings(dbAdapter.getVoiceSettings());
     };
     updateState();
@@ -120,9 +127,41 @@ export const WaiterDashboard: React.FC = () => {
       }
     );
 
+    // 3. Real-time Firestore kitchen tickets subscription for ready dishes
+    const unsubTickets = OrderRepository.subscribeToKitchenTickets(
+      restaurantId,
+      undefined,
+      (firestoreTickets) => {
+        if (!firestoreTickets) return;
+        const mapped = firestoreTickets.map(mapFirestoreKitchenTicketToKitchenTicket);
+        dbAdapter.syncFirestoreKitchenTickets(mapped);
+
+        const readyList = mapped.filter((t) => t.status === 'READY' || (t.status as any) === 'READY_FOR_HANDOVER');
+        setReadyTickets(readyList);
+
+        if (isInitialTicketMountRef.current) {
+          readyList.forEach((t) => notifiedReadyTicketIdsRef.current.add(t.id));
+          isInitialTicketMountRef.current = false;
+        } else {
+          let hasNewReady = false;
+          readyList.forEach((t) => {
+            if (!notifiedReadyTicketIdsRef.current.has(t.id)) {
+              notifiedReadyTicketIdsRef.current.add(t.id);
+              hasNewReady = true;
+            }
+          });
+          if (hasNewReady) {
+            audioService.playWaiterCallBell();
+            audioService.vibrate([250, 100, 250]);
+          }
+        }
+      }
+    );
+
     return () => {
       unsubLocal();
       unsubFirestore();
+      unsubTickets();
     };
   }, [currentProfile?.restaurant_id, isAdminOrSupervisor, currentWaiterId]);
 
@@ -184,6 +223,14 @@ export const WaiterDashboard: React.FC = () => {
 
   const activeOrders = orders.filter((o) => o.status !== 'COMPLETED' && o.status !== 'CANCELLED');
 
+  // Filter incoming new orders for waiter acknowledgement (Module 4)
+  const newPlacedOrders = orders.filter((o) => {
+    const isNew = o.status === 'PLACED' || o.status === 'NEW';
+    const notAcked = !acknowledgedOrderIds.has(o.id);
+    const isMyTable = isAdminOrSupervisor || !o.waiter_id || o.waiter_id === currentWaiterId;
+    return isNew && notAcked && isMyTable;
+  });
+
   // Filtered tables by assignment
   const displayedTables = tables.filter((t) => {
     if (tableFilter === 'MY_ASSIGNED') {
@@ -191,6 +238,35 @@ export const WaiterDashboard: React.FC = () => {
     }
     return true;
   });
+
+  const handleAcknowledgeOrder = (orderId: string) => {
+    setAcknowledgedOrderIds((prev) => new Set([...prev, orderId]));
+  };
+
+  const handleAcknowledgePickup = (ticketId: string) => {
+    dbAdapter.acknowledgeTicketPickup(ticketId, currentWaiterId);
+    setReadyTickets(
+      dbAdapter.getKitchenTickets().filter(
+        (t) => t.status === 'READY' || (t.status as any) === 'READY_FOR_HANDOVER'
+      )
+    );
+  };
+
+  const handleCompleteTableService = (tableId: string) => {
+    const res = dbAdapter.completeTableService(tableId, currentWaiterId);
+    if (selectedTable && selectedTable.id === tableId) {
+      setSelectedTable({ ...selectedTable, status: 'CLEANING' });
+    }
+    return res;
+  };
+
+  const handleMarkTableCleanedAction = (tableId: string) => {
+    const res = dbAdapter.markTableCleaned(tableId, currentWaiterId);
+    if (selectedTable && selectedTable.id === tableId) {
+      setSelectedTable({ ...selectedTable, status: 'AVAILABLE' });
+    }
+    return res;
+  };
 
   const handleAcceptCall = (callId: string) => {
     dbAdapter.acceptWaiterCall(callId, currentWaiterId);
@@ -210,6 +286,15 @@ export const WaiterDashboard: React.FC = () => {
 
   const handleMarkServed = (orderId: string) => {
     dbAdapter.markOrderServed(orderId);
+    const restaurantId = currentProfile?.restaurant_id || dbAdapter.getRestaurant().id || 'rest-001-main';
+    OrderRepository.updateOrderStatus(
+      restaurantId,
+      orderId,
+      'SERVED',
+      currentWaiterId,
+      'waiter',
+      'Waiter delivered food to table'
+    ).catch(() => {});
   };
 
   const handleClaimTableAssignment = (tableId: string) => {
@@ -389,6 +474,88 @@ export const WaiterDashboard: React.FC = () => {
             <span>Reward Verification</span>
           </button>
         </div>
+
+        {/* ============================================================== */}
+        {/* NEW CUSTOMER ORDER ALERT CARD (MODULE 4)                       */}
+        {/* ============================================================== */}
+        {newPlacedOrders.length > 0 && (
+          <div className="bg-orange-950/40 border-2 border-brand-orange/60 rounded-3xl p-5 shadow-elevated animate-pulse-subtle">
+            <div className="flex items-center justify-between pb-3 border-b border-brand-orange/30 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-brand-orange/20 text-brand-orange flex items-center justify-center font-bold shrink-0">
+                  <UtensilsCrossed className="w-4 h-4 animate-bounce" />
+                </div>
+                <div>
+                  <h3 className="font-black text-base uppercase tracking-wider text-orange-300">
+                    New Customer Orders ({newPlacedOrders.length})
+                  </h3>
+                  <p className="text-xs text-orange-200/80">Table order placed • Acknowledge order and review dishes</p>
+                </div>
+              </div>
+              <span className="text-xs font-mono text-brand-orange font-extrabold uppercase bg-brand-orange/20 px-2.5 py-1 rounded-lg">
+                Action Required
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+              {newPlacedOrders.map((ord) => {
+                const summary = ord.items.map((i) => `${i.quantity}x ${i.item_name}`).join(', ');
+                return (
+                  <div
+                    key={ord.id}
+                    className="bg-slate-900 border border-brand-orange/40 rounded-2xl p-4 space-y-3 shadow-md"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="px-2.5 py-1 rounded bg-brand-orange/20 text-brand-orange font-black text-xs">
+                        Table {ord.table?.table_number || (ord as any).table_number || 'T-00'}
+                      </span>
+                      <span className="text-[11px] font-mono text-slate-400">
+                        {formatTime(ord.created_at)}
+                      </span>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between text-xs font-mono">
+                        <span className="text-white font-bold">{ord.order_number}</span>
+                        <span className="text-green-400 font-extrabold">{formatCurrency(ord.total_amount)}</span>
+                      </div>
+                      <p className="text-xs text-slate-300 mt-1 line-clamp-2">
+                        <span className="font-semibold text-slate-400">Items: </span>
+                        {summary}
+                      </p>
+                      {ord.special_notes && (
+                        <p className="text-[10px] text-amber-300/90 italic mt-1 bg-amber-950/30 p-1.5 rounded">
+                          Note: {ord.special_notes}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="text-xs py-1"
+                        leftIcon={<Eye className="w-3.5 h-3.5" />}
+                        onClick={() => setSelectedOrderForModal(ord)}
+                      >
+                        Full Details
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="orange"
+                        className="text-xs py-1"
+                        leftIcon={<Check className="w-3.5 h-3.5" />}
+                        onClick={() => handleAcknowledgeOrder(ord.id)}
+                      >
+                        Acknowledge
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* 1. URGENT SERVICE CALLS FROM CUSTOMERS */}
         {activeTab === 'SERVICE_CALLS' && displayedCalls.length === 0 && (
@@ -613,14 +780,24 @@ export const WaiterDashboard: React.FC = () => {
                       ))}
                     </div>
 
-                    <Button
-                      size="sm"
-                      variant="success"
-                      className="w-full text-xs"
-                      onClick={() => handleMarkServed(ticket.order_id)}
-                    >
-                      Mark Food Served to Table
-                    </Button>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        size="sm"
+                        variant="orange"
+                        className="text-xs py-1.5 font-bold"
+                        onClick={() => handleAcknowledgePickup(ticket.id)}
+                      >
+                        Acknowledge Pickup
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="success"
+                        className="text-xs py-1.5 font-bold"
+                        onClick={() => handleMarkServed(ticket.order_id)}
+                      >
+                        Mark Served
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -990,33 +1167,67 @@ export const WaiterDashboard: React.FC = () => {
               <h5 className="font-bold text-slate-400 uppercase tracking-wider text-[10px]">
                 Waiter Table Operations
               </h5>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <Button
                   size="sm"
                   variant="primary"
                   className="text-xs"
                   onClick={() => {
                     tableOrders.forEach((o) => {
-                      if (o.status === 'READY') handleMarkServed(o.id);
+                      if (o.status === 'READY' || (o.status as any) === 'READY_FOR_HANDOVER' || o.status === 'PICKED_UP') {
+                        handleMarkServed(o.id);
+                      }
                     });
-                    alert(`Marked food delivered for Table ${selectedTable.table_number}.`);
+                    alert(`Marked ready food delivered for Table ${selectedTable.table_number}.`);
                   }}
                 >
-                  Mark Food Served
+                  Mark Food Delivered
                 </Button>
 
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="text-xs border-purple-800 text-purple-300 hover:bg-purple-950/60"
-                  leftIcon={<Brush className="w-3 h-3" />}
-                  onClick={() => {
-                    handleUpdateTableStatus(selectedTable.id, 'AVAILABLE');
-                    alert(`Table ${selectedTable.table_number} is now marked Cleaned & Available.`);
-                  }}
-                >
-                  Mark Clean & Ready
-                </Button>
+                {selectedTable.status === 'OCCUPIED' && (
+                  <Button
+                    size="sm"
+                    variant="orange"
+                    className="text-xs font-bold"
+                    leftIcon={<CheckCircle2 className="w-3.5 h-3.5" />}
+                    onClick={() => {
+                      handleCompleteTableService(selectedTable.id);
+                      alert(`Service completed for Table ${selectedTable.table_number}. Table moved to CLEANING.`);
+                    }}
+                  >
+                    Complete Service (Move to Cleaning)
+                  </Button>
+                )}
+
+                {selectedTable.status === 'CLEANING' && (
+                  <Button
+                    size="sm"
+                    variant="success"
+                    className="text-xs font-bold"
+                    leftIcon={<Brush className="w-3.5 h-3.5" />}
+                    onClick={() => {
+                      handleMarkTableCleanedAction(selectedTable.id);
+                      alert(`Table ${selectedTable.table_number} is now Cleaned & Available for new guests.`);
+                    }}
+                  >
+                    Confirm Cleaned & Ready (Available)
+                  </Button>
+                )}
+
+                {selectedTable.status !== 'OCCUPIED' && selectedTable.status !== 'CLEANING' && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-xs border-purple-800 text-purple-300 hover:bg-purple-950/60"
+                    leftIcon={<Brush className="w-3 h-3" />}
+                    onClick={() => {
+                      handleMarkTableCleanedAction(selectedTable.id);
+                      alert(`Table ${selectedTable.table_number} is now marked Available.`);
+                    }}
+                  >
+                    Reset to Available
+                  </Button>
+                )}
               </div>
             </div>
           </div>
@@ -1201,6 +1412,86 @@ export const WaiterDashboard: React.FC = () => {
             </Button>
           </div>
         </div>
+      </Modal>
+
+      {/* Order Full Details Modal for Waiter (Module 4) */}
+      <Modal
+        isOpen={Boolean(selectedOrderForModal)}
+        onClose={() => setSelectedOrderForModal(null)}
+        title={
+          selectedOrderForModal
+            ? `Order #${selectedOrderForModal.order_number} • Table ${selectedOrderForModal.table?.table_number || (selectedOrderForModal as any).table_number || 'T-00'}`
+            : 'Order Details'
+        }
+        description="Customer order details & special instructions"
+      >
+        {selectedOrderForModal && (
+          <div className="space-y-4 text-xs">
+            <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 flex justify-between items-center">
+              <div>
+                <span className="text-slate-400 block text-[10px]">Order Time:</span>
+                <strong className="text-white">{formatDateTime(selectedOrderForModal.created_at)}</strong>
+              </div>
+              <OrderStatusBadge status={selectedOrderForModal.status} />
+            </div>
+
+            {selectedOrderForModal.special_notes && (
+              <div className="p-2.5 bg-amber-950/40 border border-amber-800/40 rounded-xl text-amber-200">
+                <span className="font-bold text-amber-400">Order Note: </span>
+                {selectedOrderForModal.special_notes}
+              </div>
+            )}
+
+            <div className="space-y-2 border border-slate-800 rounded-xl divide-y divide-slate-800 p-3 bg-slate-950">
+              {selectedOrderForModal.items.map((it) => (
+                <div key={it.id} className="py-2 first:pt-0 last:pb-0">
+                  <div className="flex justify-between items-start">
+                    <p className="font-bold text-white text-xs">
+                      <span className="text-brand-orange font-extrabold mr-1.5">{it.quantity}x</span>
+                      {it.item_name}
+                    </p>
+                    <span className="font-mono text-slate-300 font-semibold">{formatCurrency(it.total_price)}</span>
+                  </div>
+                  {it.addons && it.addons.length > 0 && (
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      + {it.addons.map((a) => `${a.addon_name} (${formatCurrency(a.unit_price)})`).join(', ')}
+                    </p>
+                  )}
+                  {it.special_instructions && (
+                    <p className="text-[10px] text-amber-300/90 italic mt-0.5">
+                      Note: {it.special_instructions}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-between items-center p-3 bg-slate-900 rounded-xl border border-slate-800 text-sm font-extrabold">
+              <span className="text-slate-300">Total Amount:</span>
+              <span className="text-green-400 font-mono">{formatCurrency(selectedOrderForModal.total_amount)}</span>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                variant="outline"
+                className="text-xs"
+                onClick={() => setSelectedOrderForModal(null)}
+              >
+                Close
+              </Button>
+              <Button
+                variant="orange"
+                className="text-xs font-bold"
+                onClick={() => {
+                  handleAcknowledgeOrder(selectedOrderForModal.id);
+                  setSelectedOrderForModal(null);
+                }}
+              >
+                Acknowledge Order
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
     </StaffLayout>
   );

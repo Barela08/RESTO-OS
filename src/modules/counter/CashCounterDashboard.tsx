@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { dbAdapter } from '../../services/databaseAdapter';
+import { audioService } from '../../services/audioService';
+import { OrderRepository } from '../../services/firebase/orderRepository';
 import {
   Order,
   Payment,
@@ -40,6 +42,10 @@ import {
   Calendar,
   Eye,
   UtensilsCrossed,
+  ChefHat,
+  Flame,
+  ArrowRight,
+  ShoppingBag,
 } from 'lucide-react';
 
 export const CashCounterDashboard: React.FC = () => {
@@ -78,7 +84,16 @@ export const CashCounterDashboard: React.FC = () => {
   // Invoice Preview Modal
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
 
+  // Live Order Register State (Module 5)
+  const [selectedOrderForDetail, setSelectedOrderForDetail] = useState<Order | null>(null);
+  const [orderRegisterFilter, setOrderRegisterFilter] = useState<'ALL' | 'NEW' | 'PREPARING' | 'READY' | 'UNPAID' | 'PAID'>('ALL');
+  const [orderRegisterSearch, setOrderRegisterSearch] = useState<string>('');
+
   const restaurant = dbAdapter.getRestaurant();
+  const restaurantId = restaurant?.id || 'rest-001-main';
+
+  const notifiedCounterOrderIdsRef = useRef<Set<string>>(new Set());
+  const isInitialCounterMountRef = useRef<boolean>(true);
 
   useEffect(() => {
     const updateData = () => {
@@ -90,8 +105,32 @@ export const CashCounterDashboard: React.FC = () => {
       setVerificationRequests([...dbAdapter.getPaymentVerificationRequests()]);
     };
     updateData();
-    return dbAdapter.subscribe(updateData);
-  }, []);
+    const unsubLocal = dbAdapter.subscribe(updateData);
+
+    const unsubFirestore = OrderRepository.subscribeToOrders(restaurantId, (firestoreOrders) => {
+      if (!firestoreOrders) return;
+      if (isInitialCounterMountRef.current) {
+        firestoreOrders.forEach((o) => notifiedCounterOrderIdsRef.current.add(o.orderId));
+        isInitialCounterMountRef.current = false;
+      } else {
+        let hasNewOrder = false;
+        firestoreOrders.forEach((o) => {
+          if (!notifiedCounterOrderIdsRef.current.has(o.orderId)) {
+            notifiedCounterOrderIdsRef.current.add(o.orderId);
+            hasNewOrder = true;
+          }
+        });
+        if (hasNewOrder) {
+          audioService.playCounterChime();
+        }
+      }
+    });
+
+    return () => {
+      unsubLocal();
+      unsubFirestore();
+    };
+  }, [restaurantId]);
 
   const handleTableStatusChange = (tableId: string, status: TableStatus) => {
     dbAdapter.updateTable(tableId, { status });
@@ -119,6 +158,45 @@ export const CashCounterDashboard: React.FC = () => {
 
   const totalPendingAmount = pendingCashPayments.reduce((sum, p) => sum + p.amount, 0);
 
+  // 5 Real-Time Status Counters for Cash Counter Live Order Register
+  const liveNewOrdersCount = orders.filter((o) => o.status === 'PLACED' || o.status === 'NEW').length;
+  const livePreparingOrdersCount = orders.filter((o) => o.status === 'ACCEPTED' || o.status === 'PREPARING').length;
+  const liveReadyOrdersCount = orders.filter((o) => o.status === 'READY' || o.status === 'READY_FOR_HANDOVER').length;
+  const livePendingBillsCount = orders.filter((o) => o.payment_status === 'UNPAID' || o.payment_status === 'PENDING').length;
+  const livePaidBillsCount = orders.filter((o) => o.payment_status === 'PAID').length;
+
+  const filteredRegisterOrders = orders.filter((o) => {
+    if (orderRegisterFilter === 'NEW' && o.status !== 'PLACED' && o.status !== 'NEW') return false;
+    if (orderRegisterFilter === 'PREPARING' && o.status !== 'ACCEPTED' && o.status !== 'PREPARING') return false;
+    if (orderRegisterFilter === 'READY' && o.status !== 'READY' && o.status !== 'READY_FOR_HANDOVER') return false;
+    if (orderRegisterFilter === 'UNPAID' && o.payment_status !== 'UNPAID' && o.payment_status !== 'PENDING') return false;
+    if (orderRegisterFilter === 'PAID' && o.payment_status !== 'PAID') return false;
+
+    if (orderRegisterSearch.trim()) {
+      const q = orderRegisterSearch.toLowerCase();
+      const matchTable = (o.table?.table_number || (o as any).table_number || '').toLowerCase().includes(q);
+      const matchOrderNum = (o.order_number || '').toLowerCase().includes(q);
+      const matchId = (o.id || '').toLowerCase().includes(q);
+      const matchCust = (o.customer_name || '').toLowerCase().includes(q);
+      if (!matchTable && !matchOrderNum && !matchId && !matchCust) return false;
+    }
+    return true;
+  });
+
+  const handleCollectCashForOrder = (order: Order) => {
+    let pay = payments.find((p) => p.order_id === order.id || p.table_session_id === order.table_session_id);
+    if (!pay) {
+      pay = dbAdapter.initiateCustomerPayment({
+        tableSessionId: order.table_session_id,
+        method: 'CASH',
+      });
+    }
+    setSelectedOrderForDetail(null);
+    if (pay) {
+      handleOpenCashModal(pay);
+    }
+  };
+
   // ------------------------------------------------------------------
   // Cash Handlers
   // ------------------------------------------------------------------
@@ -142,6 +220,7 @@ export const CashCounterDashboard: React.FC = () => {
       cashReceivedAmount: cashReceived,
     });
 
+    audioService.playCounterChime();
     setConfirmedResult(result);
   };
 
@@ -151,6 +230,7 @@ export const CashCounterDashboard: React.FC = () => {
   const handleApproveUpi = (reqId: string) => {
     try {
       const result = dbAdapter.approveUpiPayment(reqId, 'st-ctr-1');
+      audioService.playCounterChime();
       alert(`Payment Approved! Invoice #${result.invoice.invoice_number} generated successfully.`);
     } catch (err: unknown) {
       alert((err as Error).message || 'Failed to approve UPI payment.');
@@ -232,6 +312,242 @@ export const CashCounterDashboard: React.FC = () => {
             <p className="text-xl font-extrabold text-white mt-1">{pendingRepeatScans.length}</p>
             <span className="text-[10px] text-orange-400 font-semibold">Session Authorizations</span>
           </div>
+        </div>
+
+        {/* ============================================================== */}
+        {/* LIVE ORDER REGISTER & REAL-TIME DISPATCH DESK (MODULE 5)       */}
+        {/* ============================================================== */}
+        <div className="bg-slate-900 rounded-2xl border border-slate-800 p-5 shadow-card space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-800 gap-3">
+            <div className="flex items-center gap-2">
+              <ShoppingBag className="w-5 h-5 text-brand-orange animate-pulse" />
+              <div>
+                <h3 className="font-extrabold text-sm uppercase tracking-wider text-white flex items-center gap-2">
+                  Live Order Register ({orders.length})
+                  <span className="w-2 h-2 rounded-full bg-green-400 animate-ping" />
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Authoritative multi-table real-time register • Click any order to inspect itemized pricing, taxes, and status history
+                </p>
+              </div>
+            </div>
+
+            {/* Search Input */}
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search table, order #..."
+                value={orderRegisterSearch}
+                onChange={(e) => setOrderRegisterSearch(e.target.value)}
+                className="pl-8 pr-3 py-1.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-400 focus:outline-none focus:border-brand-orange w-44 sm:w-56"
+              />
+            </div>
+          </div>
+
+          {/* 5 Real-Time Status Metric Counters */}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+            <button
+              onClick={() => setOrderRegisterFilter(orderRegisterFilter === 'NEW' ? 'ALL' : 'NEW')}
+              className={`p-3 rounded-xl border text-left transition-all ${
+                orderRegisterFilter === 'NEW'
+                  ? 'bg-amber-950/40 border-amber-500 ring-1 ring-amber-500'
+                  : 'bg-slate-800/40 border-slate-700/60 hover:bg-slate-800/70'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider">New Orders</span>
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              </div>
+              <p className="text-xl font-black text-amber-300 mt-1">{liveNewOrdersCount}</p>
+              <span className="text-[10px] text-slate-400">Incoming dispatch</span>
+            </button>
+
+            <button
+              onClick={() => setOrderRegisterFilter(orderRegisterFilter === 'PREPARING' ? 'ALL' : 'PREPARING')}
+              className={`p-3 rounded-xl border text-left transition-all ${
+                orderRegisterFilter === 'PREPARING'
+                  ? 'bg-orange-950/40 border-orange-500 ring-1 ring-orange-500'
+                  : 'bg-slate-800/40 border-slate-700/60 hover:bg-slate-800/70'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-orange-400 uppercase tracking-wider">Preparing</span>
+                <Flame className="w-3.5 h-3.5 text-orange-400 animate-pulse" />
+              </div>
+              <p className="text-xl font-black text-orange-300 mt-1">{livePreparingOrdersCount}</p>
+              <span className="text-[10px] text-slate-400">Cooking in kitchen</span>
+            </button>
+
+            <button
+              onClick={() => setOrderRegisterFilter(orderRegisterFilter === 'READY' ? 'ALL' : 'READY')}
+              className={`p-3 rounded-xl border text-left transition-all ${
+                orderRegisterFilter === 'READY'
+                  ? 'bg-green-950/40 border-green-500 ring-1 ring-green-500'
+                  : 'bg-slate-800/40 border-slate-700/60 hover:bg-slate-800/70'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-green-400 uppercase tracking-wider">Ready at Pass</span>
+                <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
+              </div>
+              <p className="text-xl font-black text-green-300 mt-1">{liveReadyOrdersCount}</p>
+              <span className="text-[10px] text-slate-400">Ready for pickup</span>
+            </button>
+
+            <button
+              onClick={() => setOrderRegisterFilter(orderRegisterFilter === 'UNPAID' ? 'ALL' : 'UNPAID')}
+              className={`p-3 rounded-xl border text-left transition-all ${
+                orderRegisterFilter === 'UNPAID'
+                  ? 'bg-red-950/40 border-red-500 ring-1 ring-red-500'
+                  : 'bg-slate-800/40 border-slate-700/60 hover:bg-slate-800/70'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-red-400 uppercase tracking-wider">Pending Bills</span>
+                <Clock className="w-3.5 h-3.5 text-red-400" />
+              </div>
+              <p className="text-xl font-black text-red-300 mt-1">{livePendingBillsCount}</p>
+              <span className="text-[10px] text-slate-400">Unsettled accounts</span>
+            </button>
+
+            <button
+              onClick={() => setOrderRegisterFilter(orderRegisterFilter === 'PAID' ? 'ALL' : 'PAID')}
+              className={`p-3 rounded-xl border text-left transition-all col-span-2 sm:col-span-1 ${
+                orderRegisterFilter === 'PAID'
+                  ? 'bg-purple-950/40 border-purple-500 ring-1 ring-purple-500'
+                  : 'bg-slate-800/40 border-slate-700/60 hover:bg-slate-800/70'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-purple-400 uppercase tracking-wider">Paid Bills</span>
+                <Receipt className="w-3.5 h-3.5 text-purple-400" />
+              </div>
+              <p className="text-xl font-black text-purple-300 mt-1">{livePaidBillsCount}</p>
+              <span className="text-[10px] text-slate-400">Settled invoices</span>
+            </button>
+          </div>
+
+          {/* Filter Pills */}
+          <div className="flex items-center gap-1.5 flex-wrap text-xs pt-1">
+            <span className="text-[11px] font-semibold text-slate-400 mr-1">Filter:</span>
+            {(['ALL', 'NEW', 'PREPARING', 'READY', 'UNPAID', 'PAID'] as const).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => setOrderRegisterFilter(mode)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                  orderRegisterFilter === mode
+                    ? 'bg-brand-orange text-white'
+                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                {mode === 'ALL'
+                  ? `All Orders (${orders.length})`
+                  : mode === 'NEW'
+                  ? `New (${liveNewOrdersCount})`
+                  : mode === 'PREPARING'
+                  ? `Preparing (${livePreparingOrdersCount})`
+                  : mode === 'READY'
+                  ? `Ready (${liveReadyOrdersCount})`
+                  : mode === 'UNPAID'
+                  ? `Pending Bills (${livePendingBillsCount})`
+                  : `Paid (${livePaidBillsCount})`}
+              </button>
+            ))}
+          </div>
+
+          {/* Live Order Register Table */}
+          {filteredRegisterOrders.length === 0 ? (
+            <div className="text-center py-8 text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
+              <ShoppingBag className="w-8 h-8 mx-auto mb-2 opacity-30 text-slate-400" />
+              <span>No orders found matching the selected filter or search term.</span>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead>
+                  <tr className="border-b border-slate-800 text-slate-400 font-semibold">
+                    <th className="py-2.5 px-3">Order # / ID</th>
+                    <th className="py-2.5 px-3">Table</th>
+                    <th className="py-2.5 px-3">Guest / Session</th>
+                    <th className="py-2.5 px-3 text-center">Items</th>
+                    <th className="py-2.5 px-3 text-right">Grand Total</th>
+                    <th className="py-2.5 px-3">Order Time</th>
+                    <th className="py-2.5 px-3 text-center">Status</th>
+                    <th className="py-2.5 px-3 text-center">Payment</th>
+                    <th className="py-2.5 px-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800">
+                  {filteredRegisterOrders.map((ord) => {
+                    const itemCount = ord.items.reduce((s, it) => s + it.quantity, 0);
+                    return (
+                      <tr
+                        key={ord.id}
+                        className="hover:bg-slate-800/40 cursor-pointer transition-colors"
+                        onClick={() => setSelectedOrderForDetail(ord)}
+                      >
+                        <td className="py-3 px-3 font-mono font-bold text-white">
+                          <span className="text-amber-300 font-extrabold">{ord.order_number}</span>
+                          <span className="block text-[10px] text-slate-500">{ord.id}</span>
+                        </td>
+                        <td className="py-3 px-3">
+                          <span className="font-extrabold text-white text-xs bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
+                            Table {ord.table?.table_number || (ord as any).table_number || 'T-00'}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 text-slate-300">
+                          <span className="font-semibold block">{ord.customer_name || 'Dine-in Guest'}</span>
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            {ord.customer_phone || ord.table_session_id?.substring(0, 10)}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 text-center font-bold text-slate-200">
+                          {itemCount} {itemCount === 1 ? 'dish' : 'dishes'}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono font-black text-sm text-green-400">
+                          {formatCurrency(ord.total_amount)}
+                        </td>
+                        <td className="py-3 px-3 text-slate-400 font-mono text-[11px]">
+                          {formatTime(ord.created_at)}
+                        </td>
+                        <td className="py-3 px-3 text-center">
+                          <OrderStatusBadge status={ord.status} />
+                        </td>
+                        <td className="py-3 px-3 text-center">
+                          <PaymentStatusBadge status={ord.payment_status || 'PENDING'} />
+                        </td>
+                        <td className="py-3 px-3 text-right" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              className="text-xs py-1 px-2.5"
+                              leftIcon={<Eye className="w-3 h-3" />}
+                              onClick={() => setSelectedOrderForDetail(ord)}
+                            >
+                              Inspect
+                            </Button>
+                            {ord.payment_status !== 'PAID' && (
+                              <Button
+                                size="sm"
+                                variant="orange"
+                                className="text-xs py-1 px-2.5"
+                                leftIcon={<Banknote className="w-3 h-3" />}
+                                onClick={() => handleCollectCashForOrder(ord)}
+                              >
+                                Collect
+                              </Button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         {/* ============================================================== */}
@@ -998,6 +1314,176 @@ export const CashCounterDashboard: React.FC = () => {
         onClose={() => setSelectedDetailTable(null)}
         onStatusChange={handleTableStatusChange}
       />
+
+      {/* ============================================================== */}
+      {/* AUTHORITATIVE ORDER DETAIL MODAL (MODULE 5)                    */}
+      {/* ============================================================== */}
+      <Modal
+        isOpen={Boolean(selectedOrderForDetail)}
+        onClose={() => setSelectedOrderForDetail(null)}
+        maxWidth="2xl"
+        title={
+          selectedOrderForDetail
+            ? `Order #${selectedOrderForDetail.order_number} • Table ${selectedOrderForDetail.table?.table_number || (selectedOrderForDetail as any).table_number || ''}`
+            : 'Order Details'
+        }
+        description="Authoritative database order record with complete itemization & tax calculations"
+      >
+        {selectedOrderForDetail && (
+          <div className="space-y-4">
+            {/* Meta Info Bar */}
+            <div className="p-3.5 bg-slate-900 rounded-xl border border-slate-800 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+              <div>
+                <span className="text-[10px] text-slate-500 uppercase tracking-wider block">Order ID</span>
+                <strong className="text-white font-mono text-xs">{selectedOrderForDetail.id}</strong>
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-500 uppercase tracking-wider block">Session Ref</span>
+                <strong className="text-slate-300 font-mono text-xs">{selectedOrderForDetail.table_session_id?.substring(0, 12)}...</strong>
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-500 uppercase tracking-wider block">Order Time</span>
+                <strong className="text-slate-300 text-xs">{formatDateTime(selectedOrderForDetail.created_at)}</strong>
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-500 uppercase tracking-wider block">Customer</span>
+                <strong className="text-white text-xs">{selectedOrderForDetail.customer_name || 'Walk-in Guest'}</strong>
+              </div>
+            </div>
+
+            {/* Special Order Notes */}
+            {selectedOrderForDetail.special_notes && (
+              <div className="p-2.5 bg-amber-950/30 border border-amber-800/40 rounded-xl text-xs text-amber-200">
+                <span className="font-bold text-amber-400">Order Note: </span>
+                {selectedOrderForDetail.special_notes}
+              </div>
+            )}
+
+            {/* Itemized Order Table */}
+            <div>
+              <h4 className="font-bold text-xs uppercase tracking-wider text-slate-400 mb-2">
+                Ordered Dishes & Items ({selectedOrderForDetail.items.length})
+              </h4>
+              <div className="border border-slate-800 rounded-xl overflow-hidden">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-slate-900 border-b border-slate-800 text-slate-400 font-semibold">
+                    <tr>
+                      <th className="py-2 px-3">Item Description</th>
+                      <th className="py-2 px-3 text-center">Qty</th>
+                      <th className="py-2 px-3 text-right">Unit Price</th>
+                      <th className="py-2 px-3 text-right">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800 bg-slate-950/60">
+                    {selectedOrderForDetail.items.map((it) => (
+                      <tr key={it.id}>
+                        <td className="py-2 px-3">
+                          <p className="font-bold text-white text-xs">{it.item_name}</p>
+                          {it.addons && it.addons.length > 0 && (
+                            <p className="text-[10px] text-slate-400">
+                              + {it.addons.map((a) => `${a.addon_name} (${formatCurrency(a.unit_price)})`).join(', ')}
+                            </p>
+                          )}
+                          {it.special_instructions && (
+                            <p className="text-[10px] text-amber-300/80 italic">Note: {it.special_instructions}</p>
+                          )}
+                        </td>
+                        <td className="py-2 px-3 text-center font-bold text-amber-400">
+                          {it.quantity}x
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono text-slate-300">
+                          {formatCurrency(it.unit_price)}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono font-bold text-white">
+                          {formatCurrency(it.total_price)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Authoritative Financial Breakdown */}
+            <div className="p-3.5 bg-slate-900 rounded-xl border border-slate-800 space-y-1.5 text-xs">
+              <div className="flex justify-between text-slate-400">
+                <span>Subtotal (Net of Taxes):</span>
+                <span className="font-mono text-slate-200">{formatCurrency(selectedOrderForDetail.subtotal_amount)}</span>
+              </div>
+              <div className="flex justify-between text-slate-400">
+                <span>CGST (2.5%):</span>
+                <span className="font-mono text-slate-200">{formatCurrency(selectedOrderForDetail.cgst_amount)}</span>
+              </div>
+              <div className="flex justify-between text-slate-400">
+                <span>SGST (2.5%):</span>
+                <span className="font-mono text-slate-200">{formatCurrency(selectedOrderForDetail.sgst_amount)}</span>
+              </div>
+              {selectedOrderForDetail.discount_amount > 0 && (
+                <div className="flex justify-between text-green-400">
+                  <span>Discount:</span>
+                  <span className="font-mono">-{formatCurrency(selectedOrderForDetail.discount_amount)}</span>
+                </div>
+              )}
+              <div className="pt-2 border-t border-slate-800 flex justify-between items-center text-sm font-extrabold text-white">
+                <span>Grand Total (Authoritative):</span>
+                <span className="font-mono text-lg text-green-400">{formatCurrency(selectedOrderForDetail.total_amount)}</span>
+              </div>
+            </div>
+
+            {/* Status & Lifecycle Timeline */}
+            <div className="p-3 bg-slate-900/60 rounded-xl border border-slate-800 text-xs flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-400">Order Progress:</span>
+                <OrderStatusBadge status={selectedOrderForDetail.status} />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-slate-400">Payment Status:</span>
+                <PaymentStatusBadge status={selectedOrderForDetail.payment_status || 'PENDING'} />
+              </div>
+            </div>
+
+            {/* Quick Actions */}
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <Button
+                variant="outline"
+                className="text-xs"
+                onClick={() => setSelectedOrderForDetail(null)}
+              >
+                Close
+              </Button>
+              {selectedOrderForDetail.payment_status !== 'PAID' ? (
+                <Button
+                  variant="orange"
+                  className="text-xs"
+                  leftIcon={<Banknote className="w-4 h-4" />}
+                  onClick={() => handleCollectCashForOrder(selectedOrderForDetail)}
+                >
+                  Collect Cash ({formatCurrency(selectedOrderForDetail.total_amount)})
+                </Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  className="text-xs"
+                  leftIcon={<Printer className="w-4 h-4" />}
+                  onClick={() => {
+                    const inv = invoices.find(
+                      (i) => i.order_id === selectedOrderForDetail.id || i.table_session_id === selectedOrderForDetail.table_session_id
+                    );
+                    if (inv) {
+                      setSelectedOrderForDetail(null);
+                      setSelectedInvoice(inv);
+                    } else {
+                      alert('Settlement invoice record loading...');
+                    }
+                  }}
+                >
+                  View / Print Tax Invoice
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
     </StaffLayout>
   );
 };

@@ -139,28 +139,52 @@ class RealtimeManager {
     if (this.processedEventIds.has(eventKey)) return;
     this.processedEventIds.add(eventKey);
 
-    // Audio & Voice Announcements
+    // Role-Filtered Audio & Voice Announcements
     try {
-      audioService.playWaiterCallBell();
+      const activeRole = (typeof window !== 'undefined'
+        ? (localStorage.getItem('resto_active_role') || localStorage.getItem('resto_staff_role'))
+        : null) as string | null;
 
-      if (notif.message_hi || notif.message_en || notif.title) {
-        const currentSettings = dbAdapter.getVoiceSettings();
+      // Customers and unauthenticated devices NEVER play staff alert sounds
+      if (activeRole && activeRole !== 'customer') {
+        const evType = notif.event_type || 'NEW_ORDER';
 
-        voiceAnnouncementService.announceEvent(
-          {
-            id: notif.id,
-            restaurant_id: notif.restaurant_id || 'rest-001-main',
-            event_type: notif.event_type || 'NEW_ORDER',
-            reference_id: notif.reference_id || notif.id,
-            event_payload: {
-              table_id: notif.table_id,
-              table_number: notif.table_number,
-              order_id: notif.order_id,
+        if (
+          (evType === 'CALL_WAITER' || evType === 'ORDER_READY') &&
+          (activeRole === 'waiter' || activeRole === 'admin' || activeRole === 'owner')
+        ) {
+          audioService.playWaiterCallBell();
+          audioService.vibrate([250, 100, 250]);
+        } else if (
+          evType === 'NEW_ORDER' &&
+          (activeRole === 'kitchen' || activeRole === 'admin' || activeRole === 'owner')
+        ) {
+          audioService.playNewOrderChime();
+        } else if (
+          (evType === 'REQUEST_BILL' || evType === 'BILL_REQUESTED' || evType === 'PAYMENT_RECEIVED') &&
+          (activeRole === 'counter' || activeRole === 'admin' || activeRole === 'owner')
+        ) {
+          audioService.playCounterChime();
+        }
+
+        if (notif.message_hi || notif.message_en || notif.title) {
+          const currentSettings = dbAdapter.getVoiceSettings();
+          voiceAnnouncementService.announceEvent(
+            {
+              id: notif.id,
+              restaurant_id: notif.restaurant_id || 'rest-001-main',
+              event_type: notif.event_type || 'NEW_ORDER',
+              reference_id: notif.reference_id || notif.id,
+              event_payload: {
+                table_id: notif.table_id,
+                table_number: notif.table_number,
+                order_id: notif.order_id,
+              },
+              created_at: notif.created_at || new Date().toISOString(),
             },
-            created_at: notif.created_at || new Date().toISOString(),
-          },
-          currentSettings
-        );
+            currentSettings
+          );
+        }
       }
     } catch {
       // Audio autoplay policy may restrict before interaction

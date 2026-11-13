@@ -24,7 +24,7 @@ import {
   FirestoreKitchenTicket,
   FirestoreOrderStatusHistory,
 } from '../../types/firestore';
-import { OrderStatus, KitchenTicketStatus } from '../../types';
+import { OrderStatus, KitchenTicketStatus, KitchenTicket } from '../../types';
 import { rtdbPresenceService } from './rtdbPresenceService';
 
 export interface CreateOrderItemInput {
@@ -446,4 +446,28 @@ export class OrderRepository {
       }
     }
   }
+}
+
+export function mapFirestoreKitchenTicketToKitchenTicket(ft: FirestoreKitchenTicket): KitchenTicket {
+  return {
+    id: ft.ticketId,
+    restaurant_id: ft.restaurantId,
+    ticket_number: ft.ticketNumber,
+    order_id: ft.orderId,
+    station_id: ft.stationId,
+    table_number: ft.tableNumber,
+    status: ft.status,
+    items: (ft.items || []).map((i) => ({
+      id: i.orderItemId,
+      ticket_id: ft.ticketId,
+      order_item_id: i.orderItemId,
+      menu_item_id: '',
+      quantity: i.quantity,
+      special_instructions: i.specialInstructions,
+      status: 'PENDING',
+      name: i.itemName,
+    } as any)),
+    created_at: typeof ft.createdAt === 'string' ? ft.createdAt : new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
 }

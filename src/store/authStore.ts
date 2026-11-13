@@ -10,6 +10,7 @@ import { dbAdapter } from '../services/databaseAdapter';
 import { EdgeFunctionsClient } from '../services/edgeFunctionsClient';
 import { isLiveSupabaseConfigured } from '../services/supabase';
 import { FirebaseAuthService } from '../services/firebase/authService';
+import { deviceRegistrationService } from '../services/firebase/deviceRegistrationService';
 import { isFirebaseConfigured } from '../lib/firebase';
 export { getDashboardForRole } from '../app/guards/RoleBasedGuard';
 
@@ -226,6 +227,13 @@ export const useAuthStore = create<AuthState>((set, get) => {
       safeStorage.set('resto_auth_profile', JSON.stringify(prof));
       safeStorage.set('resto_active_role', prof.role_id);
 
+      deviceRegistrationService.registerDevice({
+        userId: prof.id,
+        staffId: prof.id,
+        restaurantId: prof.restaurant_id || 'rest-001-main',
+        role: prof.role_id,
+      }).catch(() => {});
+
       set({
         currentProfile: prof,
         role: prof.role_id,
@@ -257,6 +265,12 @@ export const useAuthStore = create<AuthState>((set, get) => {
           safeStorage.set('resto_staff_session', JSON.stringify({ profileId: res.profile.id, token: res.token }));
           safeStorage.set('resto_auth_profile', JSON.stringify(res.profile));
           safeStorage.set('resto_active_role', res.profile.role_id);
+          deviceRegistrationService.registerDevice({
+            userId: res.profile.id,
+            staffId: res.profile.id,
+            restaurantId: res.profile.restaurant_id || 'rest-001-main',
+            role: res.profile.role_id,
+          }).catch(() => {});
           set({
             currentProfile: res.profile,
             role: res.profile.role_id,
@@ -289,6 +303,12 @@ export const useAuthStore = create<AuthState>((set, get) => {
           safeStorage.set('resto_staff_session', JSON.stringify({ profileId: res.profile.id, token: res.token }));
           safeStorage.set('resto_auth_profile', JSON.stringify(res.profile));
           safeStorage.set('resto_active_role', res.profile.role_id);
+          deviceRegistrationService.registerDevice({
+            userId: res.profile.id,
+            staffId: res.profile.id,
+            restaurantId: res.profile.restaurant_id || 'rest-001-main',
+            role: res.profile.role_id,
+          }).catch(() => {});
           set({
             currentProfile: res.profile,
             role: res.profile.role_id,
@@ -327,6 +347,8 @@ export const useAuthStore = create<AuthState>((set, get) => {
       safeStorage.remove('resto_staff_session');
       safeStorage.remove('resto_auth_profile');
       safeStorage.remove('resto_active_role');
+
+      deviceRegistrationService.unregisterDevice().catch(() => {});
 
       set({
         currentProfile: null,

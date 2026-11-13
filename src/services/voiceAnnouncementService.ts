@@ -222,9 +222,14 @@ class VoiceAnnouncementService {
   public processNotificationEvent(
     event: NotificationEvent,
     settings: VoiceSettings,
-    currentRole: StaffRoleType,
+    currentRole: StaffRoleType | 'customer',
     currentStaffId?: string
   ): boolean {
+    // 0. Customers never receive staff voice announcements or staff fallback sounds
+    if (currentRole === 'customer') {
+      return false;
+    }
+
     // 1. Prevent duplicate announcements of the same event ID
     if (this.announcedEventIds.has(event.id)) {
       return false;
@@ -237,29 +242,30 @@ class VoiceAnnouncementService {
       return false;
     }
 
-    // 3. Check if voice and event type are enabled in settings
-    if (!settings.voice_enabled) {
-      if (settings.sound_enabled) {
-        this.playFallbackSound(event.event_type);
-      }
-      this.announcedEventIds.add(event.id);
-      return false;
-    }
-
-    if (settings.enabled_events && settings.enabled_events[event.event_type] === false) {
-      this.announcedEventIds.add(event.id);
-      return false;
-    }
-
-    // 4. Role relevance filter
+    // 3. Role relevance filter FIRST: If event is not relevant to this staff role, ignore completely
     const isRelevant = this.isEventRelevantToRole(
       event.event_type,
-      currentRole,
+      currentRole as StaffRoleType,
       event.event_payload,
       currentStaffId
     );
 
     if (!isRelevant) {
+      this.announcedEventIds.add(event.id);
+      return false;
+    }
+
+    // 4. Check if event type is explicitly disabled in voice settings
+    if (settings.enabled_events && settings.enabled_events[event.event_type] === false) {
+      this.announcedEventIds.add(event.id);
+      return false;
+    }
+
+    // 5. If voice is disabled but sound is enabled: play role-appropriate fallback sound
+    if (!settings.voice_enabled) {
+      if (settings.sound_enabled) {
+        this.playFallbackSound(event.event_type);
+      }
       this.announcedEventIds.add(event.id);
       return false;
     }
@@ -451,7 +457,13 @@ class VoiceAnnouncementService {
   }
 
   public announceEvent(event: NotificationEvent, settings: VoiceSettings) {
-    const role = (typeof window !== 'undefined' ? localStorage.getItem('resto_active_role') : 'admin') || 'admin';
+    const storedRole = typeof window !== 'undefined'
+      ? (localStorage.getItem('resto_active_role') || localStorage.getItem('resto_staff_role'))
+      : null;
+    const role = storedRole || 'customer';
+    if (role === 'customer') {
+      return; // Customers never receive staff voice announcements
+    }
     const staffId = typeof window !== 'undefined' ? localStorage.getItem('resto_staff_id') || undefined : undefined;
     this.processNotificationEvent(event, settings, role as StaffRoleType, staffId);
   }

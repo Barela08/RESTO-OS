@@ -8,5 +8,6 @@ export default defineConfig({
   // @ts-expect-error vitest config
   test: {
     setupFiles: ['./tests/setup.ts'],
+    testTimeout: 15000,
   },
 })

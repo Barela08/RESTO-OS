@@ -176,6 +176,49 @@ class AudioAlertService {
   public playNewOrderBeep(customVolume?: number): boolean {
     return this.playNewOrderChime(customVolume);
   }
+
+  // Crisp register cash chime for counter billing and payments
+  public playCounterChime(customVolume?: number): boolean {
+    if (this.isMuted) return false;
+    const ctx = this.getAudioContext();
+    if (!ctx) return false;
+
+    const vol = typeof customVolume === 'number' ? customVolume : this.volume;
+    try {
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(987.77, now); // B5
+      osc.frequency.setValueAtTime(1318.51, now + 0.1); // E6
+
+      gainNode.gain.setValueAtTime(0, now);
+      gainNode.gain.linearRampToValueAtTime(0.35 * vol, now + 0.02);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+
+      osc.connect(gainNode);
+      gainNode.connect(ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.5);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Mobile device haptic feedback / vibration for handheld waiter devices
+  public vibrate(pattern: number | number[] = [250, 100, 250]): boolean {
+    if (typeof window !== 'undefined' && 'navigator' in window && 'vibrate' in navigator) {
+      try {
+        return navigator.vibrate(pattern);
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  }
 }
 
 export const audioService = new AudioAlertService();

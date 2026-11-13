@@ -469,3 +469,22 @@ export interface RTDBDeviceStatus {
   appVersion?: string;
   lastPing: number;
 }
+
+// --------------------------------------------------------------------
+// 9. Staff Hardware & Device Role Registration
+// --------------------------------------------------------------------
+
+export interface FirestoreDeviceRegistration {
+  deviceId: string;
+  userId: string;
+  staffId?: string | null;
+  restaurantId: string;
+  role: 'counter' | 'waiter' | 'kitchen' | 'customer' | 'admin' | 'owner';
+  deviceType: 'desktop' | 'mobile' | 'tablet';
+  fcmToken?: string | null;
+  notificationPermission: 'default' | 'granted' | 'denied';
+  lastActiveAt: Timestamp | FieldValue | string;
+  isActive: boolean;
+  userAgent?: string;
+  appVersion?: string;
+}

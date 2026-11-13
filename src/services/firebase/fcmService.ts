@@ -7,6 +7,7 @@ import { getFCM, firebaseConfig } from '../../lib/firebase';
 import { getToken, onMessage, MessagePayload } from 'firebase/messaging';
 import { audioService } from '../audioService';
 import { voiceAnnouncementService } from '../voiceAnnouncementService';
+import { deviceRegistrationService } from './deviceRegistrationService';
 
 export class FCMService {
   private static instance: FCMService;
@@ -60,6 +61,7 @@ export class FCMService {
 
       if (token) {
         this.currentToken = token;
+        deviceRegistrationService.updateFcmToken(token).catch(() => {});
         this.startForegroundListener();
         return token;
       }
@@ -89,18 +91,25 @@ export class FCMService {
         const eventType = payload.data?.eventType || 'ALERT';
         const tableNumber = payload.data?.tableNumber;
 
-        // Play appropriate sound bell
-        if (eventType === 'CALL_WAITER') {
-          audioService.playWaiterCallBell();
-        } else if (eventType === 'ORDER_READY') {
-          audioService.playOrderReadyChime();
-        } else if (eventType === 'NEW_ORDER') {
-          audioService.playNewOrderBeep();
-        }
+        const activeRole = (typeof window !== 'undefined'
+          ? (localStorage.getItem('resto_active_role') || localStorage.getItem('resto_staff_role'))
+          : null) as string | null;
 
-        // Trigger multilingual voice announcement if configured
-        if (payload.data?.spokenText) {
-          voiceAnnouncementService.speakImmediate(payload.data.spokenText);
+        // Strictly role-gated sound delivery: customer devices NEVER play staff bells
+        if (activeRole && activeRole !== 'customer') {
+          if ((eventType === 'CALL_WAITER' || eventType === 'ORDER_READY') && (activeRole === 'waiter' || activeRole === 'admin' || activeRole === 'owner')) {
+            audioService.playWaiterCallBell();
+            audioService.vibrate([250, 100, 250]);
+          } else if (eventType === 'NEW_ORDER' && (activeRole === 'kitchen' || activeRole === 'admin' || activeRole === 'owner')) {
+            audioService.playNewOrderBeep();
+          } else if ((eventType === 'REQUEST_BILL' || eventType === 'PAYMENT_RECEIVED') && (activeRole === 'counter' || activeRole === 'admin' || activeRole === 'owner')) {
+            audioService.playCounterChime();
+          }
+
+          // Trigger multilingual voice announcement if configured for staff
+          if (payload.data?.spokenText) {
+            voiceAnnouncementService.speakImmediate(payload.data.spokenText);
+          }
         }
 
         if (onCustomMessage) {

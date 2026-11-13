@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { dbAdapter } from '../../services/databaseAdapter';
-import { Order } from '../../types';
+import { db } from '../../lib/firebase';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { Order, OrderStatus } from '../../types';
 import { formatCurrency } from '../../utils/currency';
 import { formatDateTime } from '../../utils/date';
 import { Button } from '../../components/ui/Button';
@@ -30,7 +32,37 @@ export const OrderTrackingPage: React.FC = () => {
       }
     };
     fetchOrder();
-    return dbAdapter.subscribe(fetchOrder);
+    const unsubLocal = dbAdapter.subscribe(fetchOrder);
+
+    let unsubFirestore = () => {};
+    if (db && id) {
+      try {
+        const orderRef = doc(db, 'orders', id);
+        unsubFirestore = onSnapshot(orderRef, (snap) => {
+          if (snap.exists()) {
+            const data = snap.data();
+            const rawStatus = data.status;
+            const mappedStatus =
+              rawStatus === 'READY_FOR_HANDOVER' ? 'READY' : rawStatus;
+            setOrder((prev) => {
+              if (!prev) return prev;
+              return {
+                ...prev,
+                status: mappedStatus as OrderStatus,
+                updated_at: new Date().toISOString(),
+              };
+            });
+          }
+        });
+      } catch (err) {
+        console.warn('[OrderTracking] Firestore subscription notice:', err);
+      }
+    }
+
+    return () => {
+      unsubLocal();
+      unsubFirestore();
+    };
   }, [id]);
 
   if (!order) {

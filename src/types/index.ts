@@ -362,6 +362,7 @@ export interface Order {
   discount_amount: number;
   total_amount: number;
   status: OrderStatus;
+  payment_status?: PaymentStatus;
   rejection_reason?: string;
   special_notes?: string;
   items: OrderItem[];
@@ -558,7 +559,10 @@ export type VoiceEventType =
   | 'REPEAT_SCAN'
   | 'REPEAT_SCAN_APPROVAL'
   | 'URGENT_ASSISTANCE'
-  | 'ORDER_CANCELLED';
+  | 'ORDER_CANCELLED'
+  | 'FOOD_SERVED'
+  | 'TABLE_CLEANING'
+  | 'TABLE_AVAILABLE';
 
 export interface VoiceSettings {
   id: string;

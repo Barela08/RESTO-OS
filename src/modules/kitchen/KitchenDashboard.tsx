@@ -1,10 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { dbAdapter } from '../../services/databaseAdapter';
 import { KitchenTicket, KitchenTicketStatus } from '../../types';
 import { formatTime } from '../../utils/date';
 import { StaffLayout } from '../../components/layout/StaffLayout';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
+import { audioService } from '../../services/audioService';
+import {
+  OrderRepository,
+  mapFirestoreKitchenTicketToKitchenTicket,
+} from '../../services/firebase/orderRepository';
 import {
   ChefHat,
   Clock,
@@ -20,18 +25,62 @@ export const KitchenDashboard: React.FC = () => {
   const [tickets, setTickets] = useState<KitchenTicket[]>([]);
   const [selectedStationId, setSelectedStationId] = useState<string>('all');
   const stations = dbAdapter.getKitchenStations();
+  const restaurant = dbAdapter.getRestaurant();
+  const restaurantId = restaurant?.id || 'rest-001-main';
 
   // Rejection modal state
   const [rejectingTicketId, setRejectingTicketId] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
 
+  // Track ticket IDs already alerted with audio to prevent duplicate chimes on re-renders
+  const notifiedTicketIdsRef = useRef<Set<string>>(new Set());
+  const isInitialMountRef = useRef<boolean>(true);
+
   useEffect(() => {
+    // 1. Local adapter subscription
     const updateTickets = () => {
       setTickets([...dbAdapter.getKitchenTickets()]);
     };
     updateTickets();
-    return dbAdapter.subscribe(updateTickets);
-  }, []);
+    const unsubLocal = dbAdapter.subscribe(updateTickets);
+
+    // 2. Real-time Firestore onSnapshot subscription across all connected devices
+    const unsubFirestore = OrderRepository.subscribeToKitchenTickets(
+      restaurantId,
+      selectedStationId === 'all' ? undefined : selectedStationId,
+      (firestoreTickets) => {
+        if (!firestoreTickets) return;
+
+        // Check for new tickets to chime on kitchen terminal
+        const incomingNew = firestoreTickets.filter((t) => t.status === 'NEW');
+        if (isInitialMountRef.current) {
+          // On first load, seed notified IDs so initial render doesn't chime
+          incomingNew.forEach((t) => notifiedTicketIdsRef.current.add(t.ticketId));
+          isInitialMountRef.current = false;
+        } else {
+          let hasFreshNew = false;
+          incomingNew.forEach((t) => {
+            if (!notifiedTicketIdsRef.current.has(t.ticketId)) {
+              notifiedTicketIdsRef.current.add(t.ticketId);
+              hasFreshNew = true;
+            }
+          });
+          if (hasFreshNew) {
+            audioService.playNewOrderChime();
+          }
+        }
+
+        const mapped = firestoreTickets.map(mapFirestoreKitchenTicketToKitchenTicket);
+        dbAdapter.syncFirestoreKitchenTickets(mapped);
+        setTickets([...dbAdapter.getKitchenTickets()]);
+      }
+    );
+
+    return () => {
+      unsubLocal();
+      unsubFirestore();
+    };
+  }, [restaurantId, selectedStationId]);
 
   const filteredTickets = tickets.filter((t) => {
     if (selectedStationId !== 'all' && t.station_id !== selectedStationId) return false;
@@ -40,29 +89,36 @@ export const KitchenDashboard: React.FC = () => {
 
   const newTickets = filteredTickets.filter(t => t.status === 'NEW');
   const preparingTickets = filteredTickets.filter(t => t.status === 'ACCEPTED' || t.status === 'PREPARING');
-  const readyTickets = filteredTickets.filter(t => t.status === 'READY');
+  const readyTickets = filteredTickets.filter(t => t.status === 'READY' || (t.status as any) === 'READY_FOR_HANDOVER');
 
-  const handleAccept = (ticketId: string) => {
+  const handleAccept = async (ticketId: string) => {
     dbAdapter.updateKitchenTicketStatus(ticketId, 'ACCEPTED');
+    await OrderRepository.updateKitchenTicketStatus(restaurantId, ticketId, 'ACCEPTED').catch(() => {});
   };
 
-  const handleStartPrep = (ticketId: string) => {
+  const handleStartPrep = async (ticketId: string) => {
     dbAdapter.updateKitchenTicketStatus(ticketId, 'PREPARING');
+    await OrderRepository.updateKitchenTicketStatus(restaurantId, ticketId, 'PREPARING').catch(() => {});
   };
 
-  const handleMarkReady = (ticketId: string) => {
-    dbAdapter.updateKitchenTicketStatus(ticketId, 'READY');
+  const handleMarkReady = async (ticketId: string) => {
+    dbAdapter.updateKitchenTicketStatus(ticketId, 'READY_FOR_HANDOVER');
+    await OrderRepository.updateKitchenTicketStatus(restaurantId, ticketId, 'READY_FOR_HANDOVER').catch(() => {});
   };
 
-  const handleHandover = (ticketId: string) => {
-    dbAdapter.updateKitchenTicketStatus(ticketId, 'HANDED_OVER');
+  const handleHandover = async (ticketId: string) => {
+    dbAdapter.updateKitchenTicketStatus(ticketId, 'PICKED_UP');
+    await OrderRepository.updateKitchenTicketStatus(restaurantId, ticketId, 'PICKED_UP').catch(() => {});
   };
 
-  const handleConfirmReject = () => {
+  const handleConfirmReject = async () => {
     if (!rejectingTicketId) return;
-    dbAdapter.updateKitchenTicketStatus(rejectingTicketId, 'REJECTED', rejectionReason);
+    const tId = rejectingTicketId;
+    const reason = rejectionReason;
+    dbAdapter.updateKitchenTicketStatus(tId, 'REJECTED', reason);
     setRejectingTicketId(null);
     setRejectionReason('');
+    await OrderRepository.updateKitchenTicketStatus(restaurantId, tId, 'REJECTED', reason).catch(() => {});
   };
 
   return (
